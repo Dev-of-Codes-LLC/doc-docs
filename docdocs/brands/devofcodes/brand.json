@@ -1,0 +1,13 @@
+{
+  "name": "DevOfCodes",
+  "mark": "devofcodes.com",
+  "colors": {
+    "before": "#F59E0B",
+    "after": "#00C8FF",
+    "pass": "#10B981",
+    "fail": "#F43F5E",
+    "surface": "#0E1117",
+    "text": "#E8EAF0"
+  },
+  "fonts": "Syne, Literata and JetBrains Mono, all under the SIL Open Font License (see fonts/)."
+}

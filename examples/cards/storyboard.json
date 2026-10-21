@@ -1,0 +1,17 @@
+{
+  "id": "cards",
+  "title": "DOC Docs card check",
+  "formats": ["16:9", "9:16"],
+  "voice": "piper:en_US-joe-medium",
+  "scenes": [
+    { "type": "card", "template": "title",
+      "fields": { "kicker": "DOC Docs · Example", "title": "Every card, both formats", "subtitle": "A quick check of the brand templates." },
+      "beats": [ { "say": "This is a title card, recorded in both formats." } ] },
+    { "type": "card", "template": "text",
+      "fields": { "kicker": "How it works", "title": "One sentence per beat", "body": "Each beat is one sentence of narration plus the actions it describes." },
+      "beats": [ { "say": "Each beat is one sentence, plus what happens on screen while it is said." } ] },
+    { "type": "card", "template": "credit",
+      "fields": { "kicker": "Made with DOC Docs", "lines": ["Free and open source.", "github.com/Dev-of-Codes-LLC/doc-docs"] },
+      "beats": [ { "hold": 2000 } ] }
+  ]
+}
