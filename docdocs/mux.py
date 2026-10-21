@@ -1,9 +1,10 @@
 """Stitch the takes into one MP4 and one SRT per format.
 
-Frames are lossless PNGs with the time each was drawn. The video is the
-frames held for exactly as long as they were on screen, encoded once to
-H.264. The narration is one WAV with every clip placed where its beat
-started, so picture and voice cannot drift.
+Frames are lossless PNGs with the time each was drawn. For every 1/30 s of
+the video, the stitch picks the frame that was on screen at that moment and
+pipes it to ffmpeg, which encodes once to H.264 at exactly 30 fps. Scene
+offsets come from the same frame count, and the narration is one WAV with
+every clip placed where its beat started, so picture and voice cannot drift.
 """
 
 import array
@@ -47,39 +48,35 @@ def stitch(storyboard: Storyboard, fmt: Format, log=print) -> tuple[Path, Path]:
 
     out_dir = storyboard.build_dir
     stem = f"{storyboard.id}-{fmt.slug}"
-    concat = out_dir / f"{stem}.frames.txt"
     audio_path = out_dir / f"{stem}.wav"
     srt_path = out_dir / f"{stem}.srt"
     mp4_path = out_dir / f"{stem}.mp4"
 
-    lines = ["ffconcat version 1.0"]
-    total = sum(t.duration for _, t in takes)
+    # One entry per output frame: the screenshot on screen at that moment.
+    schedule: list[Path] = []
+    scene_starts: list[float] = []
+    for sdir, take in takes:
+        scene_starts.append(len(schedule) / FPS)
+        frames = sorted(take.frames)
+        shown = 0
+        for k in range(max(1, round(take.duration * FPS))):
+            at = k / FPS
+            while shown + 1 < len(frames) and frames[shown + 1][0] <= at:
+                shown += 1
+            schedule.append(sdir / "frames" / frames[shown][1])
+    total = len(schedule) / FPS
+
     samples = array.array("h", bytes(2 * round(total * SAMPLE_RATE)))
     cues = []
-    offset = 0.0
-    last_frame = None
-    for sdir, take in takes:
-        frames = sorted(take.frames)
-        for i, (at, name) in enumerate(frames):
-            start = 0.0 if i == 0 else at
-            end = frames[i + 1][0] if i + 1 < len(frames) else take.duration
-            if end - start <= 0:
-                continue
-            last_frame = (sdir / "frames" / name).as_posix()
-            lines.append(f"file '{last_frame}'")
-            lines.append(f"duration {end - start:.4f}")
+    for (sdir, take), offset in zip(takes, scene_starts):
         for mark in take.marks:
             begin = offset + mark.start
             with wave.open(mark.clip) as wf:
                 clip = array.array("h", wf.readframes(wf.getnframes()))
             at = round(begin * SAMPLE_RATE)
-            room = len(samples) - at
+            room = max(0, len(samples) - at)
             samples[at:at + min(len(clip), room)] = clip[:room]
             cues.append((begin, begin + mark.seconds, mark.text))
-        offset += take.duration
-    if last_frame:
-        lines.append(f"file '{last_frame}'")  # the concat demuxer drops the last duration otherwise
-    concat.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     with wave.open(str(audio_path), "wb") as wf:
         wf.setnchannels(1)
@@ -95,15 +92,25 @@ def stitch(storyboard: Storyboard, fmt: Format, log=print) -> tuple[Path, Path]:
     w, h = fmt.width, fmt.height
     cmd = [
         ffmpeg_exe(), "-y", "-loglevel", "error",
-        "-f", "concat", "-safe", "0", "-i", str(concat),
+        "-f", "image2pipe", "-framerate", str(FPS), "-c:v", "png", "-i", "-",
         "-i", str(audio_path),
         "-vf", f"scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=0x080A0F,format=yuv420p",
-        "-fps_mode", "cfr", "-r", str(FPS),
+        "-r", str(FPS),
         "-c:v", "libx264", "-preset", "medium", "-crf", "18",
         "-c:a", "aac", "-b:a", "160k",
         "-t", f"{total:.3f}", "-movflags", "+faststart",
         str(mp4_path),
     ]
-    log(f"[{fmt.name}] encoding {total:.1f} s to {mp4_path.name}")
-    subprocess.run(cmd, check=True)
+    log(f"[{fmt.name}] encoding {total:.1f} s ({len(schedule)} frames) to {mp4_path.name}")
+    proc = subprocess.Popen(cmd, stdin=subprocess.PIPE)
+    last_path, last_bytes = None, b""
+    try:
+        for path in schedule:
+            if path != last_path:
+                last_path, last_bytes = path, path.read_bytes()
+            proc.stdin.write(last_bytes)
+    finally:
+        proc.stdin.close()
+    if proc.wait() != 0:
+        raise RuntimeError(f"ffmpeg failed (exit {proc.returncode})")
     return mp4_path, srt_path
