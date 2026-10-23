@@ -185,6 +185,7 @@ class SceneContext:
         # Cards already show their words, so they get no captions unless they ask.
         self.captions = fmt.name in storyboard.captions and scene.raw.get("captions", scene.type != "card")
         self.hud_state: dict = {}
+        self.resolve_rect = None  # set by scenes whose content lives in a frame
 
     # -- setup ---------------------------------------------------------------
 
@@ -255,7 +256,10 @@ class SceneContext:
             scale = action.get("scale", 1.8)
             if isinstance(scale, dict):  # per format: {"16:9": 1.35, "9:16": 1.15}
                 scale = scale.get(self.fmt.name, 1.0)
-            spec = {"target": value, "scale": float(scale), "ms": int(action.get("ms", 700))}
+            target = value
+            if isinstance(value, str) and self.resolve_rect:
+                target = await self.resolve_rect(value) or value
+            spec = {"target": target, "scale": float(scale), "ms": int(action.get("ms", 700))}
             self.hud_state["zoom"] = spec
             await self.hud("zoom", spec)
             await asyncio.sleep(spec["ms"] / 1000)

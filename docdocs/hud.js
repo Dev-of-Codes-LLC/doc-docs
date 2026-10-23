@@ -5,11 +5,29 @@
 //   hud  stays put: labels, captions, badges, the fade-through-navy cover
 // The recorder drives it through window.__docdocsHud.
 (() => {
-  if (window.top !== window) return; // top frame only
   const cfg = window.__docdocs || {};
+  if (window.top !== window) {
+    // Inside the phone frame: report shifts to the top frame, which draws them.
+    if (cfg.layoutShift && 'PerformanceObserver' in window) {
+      new PerformanceObserver((list) => {
+        let frameEl;
+        try { frameEl = window.frameElement; } catch (e) { return; }
+        const top = window.top.__docdocsHud;
+        if (!frameEl || !top) return;
+        const fr = frameEl.getBoundingClientRect();
+        const k = fr.width / window.innerWidth;
+        const map = (r) => r && { x: fr.left + r.x * k, y: fr.top + r.y * k, width: r.width * k, height: r.height * k };
+        for (const e of list.getEntries()) {
+          if (e.hadRecentInput) continue;
+          top.shift(e.value, (e.sources || []).map((s) => [map(s.previousRect), map(s.currentRect)]));
+        }
+      }).observe({ type: 'layout-shift', buffered: true });
+    }
+    return;
+  }
   const C = { amber: '#F59E0B', cyan: '#00C8FF', navy: '#080A0F', text: '#E8EAF0', muted: '#8B93A1', rose: '#F43F5E' };
   const state = { label: null, caption: null, speed: null, zoom: null, covered: false };
-  let fx, hud, labelEl, captionEl, badgeEl, speedEl, clsEl, cover;
+  let fx, hud, labelEl, captionEl, badgeEl, speedEl, clsEl, bigEl, cover;
   let cls = 0;
 
   const css = `
@@ -39,6 +57,11 @@
     .dd-cover { position: absolute; inset: 0; background: ${C.navy}; opacity: 0; transition: opacity var(--cover-ms, 320ms) ease-in-out; }
     .dd-cover.on { opacity: 1; }
     .dd-shift { position: fixed; border-radius: 6px; transition: opacity 1.3s ease-out .5s; }
+    .dd-shift.held { transition: opacity 600ms ease-out; }
+    .dd-big { position: absolute; right: 9vw; top: 50%; transform: translateY(-50%); text-align: center; }
+    .dd-big .v { font: 700 calc(var(--u) * 11)/1 'DD Mono', ui-monospace, monospace; color: ${C.amber}; }
+    .dd-big .v.after { color: ${C.cyan}; }
+    .dd-big .k { font: 700 calc(var(--u) * 2.2)/1 'DD Mono', ui-monospace, monospace; letter-spacing: .16em; color: ${C.muted}; margin-top: calc(var(--u) * 1.6); }
   `;
 
   function build() {
@@ -53,7 +76,13 @@
     hud.append(labelEl, captionEl, cover);
     document.documentElement.append(style, fx, hud);
     if (cfg.badge) badgeEl = pill(cfg.badge, cfg.badgeTone === 'after' ? C.cyan : C.amber, 'top', 'right');
-    if (cfg.layoutShift) clsEl = pill('CLS 0.000', cfg.badgeTone === 'after' ? C.cyan : C.amber, 'top', 'left');
+    if (cfg.layoutShift && !cfg.bigCounter) clsEl = pill('CLS 0.000', cfg.badgeTone === 'after' ? C.cyan : C.amber, 'top', 'left');
+    if (cfg.layoutShift && cfg.bigCounter) {
+      bigEl = document.createElement('div');
+      bigEl.className = 'dd-big';
+      bigEl.innerHTML = `<div class="v ${cfg.badgeTone === 'after' ? 'after' : ''}">0.000</div><div class="k">LAYOUT SHIFT</div>`;
+      hud.insertBefore(bigEl, cover);
+    }
     replay();
     return true;
   }
@@ -140,11 +169,15 @@
     fx.style.setProperty('--zoom-ms', `${spec ? spec.ms : 700}ms`);
     if (!spec) { body.style.transform = ''; fx.style.transform = ''; return; }
     const el = typeof spec.target === 'string' ? document.querySelector(spec.target) : null;
-    const r = el ? el.getBoundingClientRect() : spec.target;
-    if (!r) return;
+    const raw = el ? el.getBoundingClientRect() : spec.target; // or {left, top, width, height}
+    if (!raw) return;
+    const vw = innerWidth, vh = innerHeight;
+    // Aim at the part of the target that is on screen, not at a centre far below the fold.
+    const left = Math.max(raw.left, 0), top = Math.max(raw.top, 0);
+    const right = Math.min(raw.left + raw.width, vw), bottom = Math.min(raw.top + raw.height, vh);
+    const r = { left, top, width: Math.max(0, right - left), height: Math.max(0, bottom - top) };
     const s = spec.scale;
     const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
-    const vw = innerWidth, vh = innerHeight;
     const b = body.getBoundingClientRect();
     const tx = vw / 2 - s * cx, ty = vh / 2 - s * cy;
     fx.style.transform = `translate(${tx}px, ${ty}px) scale(${s})`;
@@ -158,26 +191,45 @@
     if (state.covered) setCover(true, 0);
   }
 
+  // With holdShifts, outlines stay until clearShifts(), so the narration can point at them.
   function outline(rect, dashed) {
     if (!build() || !rect || (!rect.width && !rect.height)) return;
     const box = document.createElement('div');
-    box.className = 'dd-shift';
+    box.className = 'dd-shift' + (cfg.holdShifts ? ' held' : '');
     Object.assign(box.style, {
       left: `${rect.x}px`, top: `${rect.y}px`, width: `${rect.width}px`, height: `${rect.height}px`,
-      border: `3px ${dashed ? 'dashed' : 'solid'} ${C.amber}`, background: dashed ? 'transparent' : 'rgb(245 158 11 / .16)',
+      border: `${dashed ? 2 : 3}px ${dashed ? 'dashed' : 'solid'} ${C.amber}`,
+      background: dashed ? 'transparent' : 'rgb(245 158 11 / .16)', opacity: dashed && cfg.holdShifts ? '.55' : '1',
     });
     fx.appendChild(box);
+    if (cfg.holdShifts) return;
     requestAnimationFrame(() => requestAnimationFrame(() => { box.style.opacity = '0'; }));
     setTimeout(() => box.remove(), 2200);
   }
 
-  if (cfg.layoutShift && 'PerformanceObserver' in window) {
+  function shift(value, pairs) {
+    cls += value;
+    for (const [before, after] of pairs) { outline(before, true); outline(after, false); }
+    if (!build()) return;
+    if (clsEl) clsEl.textContent = `CLS ${cls.toFixed(3)}`;
+    if (bigEl) bigEl.querySelector('.v').textContent = cls.toFixed(3);
+  }
+
+  function clearShifts() {
+    if (!build()) return;
+    for (const box of fx.querySelectorAll('.dd-shift')) { box.style.opacity = '0'; setTimeout(() => box.remove(), 700); }
+  }
+
+  // In the phone frame (bigCounter) the shifts come from the app's own frame;
+  // here, only the page itself is watched, never the HUD's own elements.
+  const ours = (node) => node && node.closest && node.closest('#dd-hud, #dd-fx');
+  if (cfg.layoutShift && !cfg.bigCounter && 'PerformanceObserver' in window) {
     new PerformanceObserver((list) => {
       for (const entry of list.getEntries()) {
         if (entry.hadRecentInput) continue;
-        cls += entry.value;
-        for (const s of entry.sources || []) { outline(s.previousRect, true); outline(s.currentRect, false); }
-        if (build() && clsEl) clsEl.textContent = `CLS ${cls.toFixed(3)}`;
+        const sources = (entry.sources || []).filter((s) => !ours(s.node));
+        if (entry.sources && entry.sources.length && !sources.length) continue;
+        shift(entry.value, sources.map((s) => [s.previousRect, s.currentRect]));
       }
     }).observe({ type: 'layout-shift', buffered: true });
   }
@@ -191,6 +243,8 @@
     speed: setSpeed,
     cover: setCover,
     zoom: setZoom,
+    shift,
+    clearShifts,
     restore(saved) { Object.assign(state, saved); replay(); if (saved.zoom) setTimeout(() => setZoom(saved.zoom), 50); },
   };
 })();

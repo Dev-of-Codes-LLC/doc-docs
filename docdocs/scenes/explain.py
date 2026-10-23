@@ -17,8 +17,9 @@ up and count them, so the picture builds and changes without cutting.
 
 Kinds: text, box, dot, dots (a scattered field), axes, line (from/to an id or
 a point), pill (parts that light up), counter, check.
-Actions: show, hide, set, light, count, pulse, and the common wait, zoom,
-unzoom and label.
+Actions: show, hide, set (add "together": true to start the next action at
+the same moment), light, count, pulse, and the common wait, zoom, unzoom and
+label.
 """
 
 import html
@@ -115,7 +116,7 @@ window.dd = {
       if (spec.tone) e.style.setProperty('--tone', spec.tone);
       if (spec.html !== undefined) (e.querySelector('.t, .v') || e).innerHTML = spec.html;
     }
-    await sleep(ms);
+    if (!spec.together) await sleep(ms); // together: start the next action at the same moment
   },
   async light(spec) {
     const parts = els[spec.id].querySelectorAll('.part');
