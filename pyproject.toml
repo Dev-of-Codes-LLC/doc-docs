@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "docdocs"
+version = "0.1.0"
+description = "DOC Docs: AI-written product guides and narrated how-to videos, kept in step with your code"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "Dev of Codes LLC" }]
+requires-python = ">=3.11"
+dependencies = [
+  "playwright>=1.48",
+  "imageio-ffmpeg>=0.5",
+  "piper-tts>=1.3",
+]
+
+[project.optional-dependencies]
+# Kokoro, the natural-sounding default voice. Its phonemizer and espeak-ng are
+# GPL-3.0; DOC Docs runs it in a separate process and never imports it.
+kokoro = ["kokoro-onnx>=0.4"]
+
+[project.scripts]
+docdocs = "docdocs.cli:main"
+
+[project.urls]
+Repository = "https://github.com/Dev-of-Codes-LLC/doc-docs"
+
+[tool.setuptools.packages.find]
+include = ["docdocs*"]
+
+[tool.setuptools.package-data]
+docdocs = ["*.js", "brands/**/*", "templates/**/*"]
