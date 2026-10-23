@@ -61,6 +61,7 @@ class Beat:
     hold_ms: int
     label: str | None = None  # a key phrase on screen; *word* is the accent
     speed: float = 1.0  # play this beat faster; the video says so on screen
+    pause_ms: int = 0  # extra silence after the sentence, before the next beat
 
 
 @dataclass
@@ -167,7 +168,7 @@ def load(path: str | Path) -> Storyboard:
             if not 0.5 <= speed <= 8:
                 problems.append(f"scene {i}: a beat's speed must be between 0.5 and 8")
             beats.append(Beat(say=b.get("say"), actions=actions, hold_ms=int(b.get("hold", 0)),
-                              label=b.get("label"), speed=speed))
+                              label=b.get("label"), speed=speed, pause_ms=int(b.get("pause", 0))))
         if not beats:
             # A scene with no beats still shows for a moment.
             beats.append(Beat(say=None, actions=[], hold_ms=int(s.get("hold", 2500))))

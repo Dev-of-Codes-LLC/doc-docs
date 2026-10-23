@@ -254,8 +254,10 @@ class SceneContext:
             await asyncio.sleep(float(value) / 1000)
         elif name == "zoom":
             scale = action.get("scale", 1.8)
-            if isinstance(scale, dict):  # per format: {"16:9": 1.35, "9:16": 1.15}
-                scale = scale.get(self.fmt.name, 1.0)
+            if isinstance(scale, dict):  # per format: {"16:9": 1.35, "9:16": 1.15}; a format left out gets no zoom
+                if self.fmt.name not in scale:
+                    return True
+                scale = scale[self.fmt.name]
             target = value
             if isinstance(value, str) and self.resolve_rect:
                 target = await self.resolve_rect(value) or value
@@ -264,6 +266,8 @@ class SceneContext:
             await self.hud("zoom", spec)
             await asyncio.sleep(spec["ms"] / 1000)
         elif name == "unzoom":
+            if not self.hud_state.get("zoom"):
+                return True
             self.hud_state["zoom"] = None
             await self.hud("zoom", None)
             await asyncio.sleep(0.7)
@@ -322,7 +326,7 @@ class SceneContext:
                     await run_action(action)
             # Time the beat from the end of the speech, not the end of the clip's trailing silence.
             spoken = clip.speech_end if clip else 0.0
-            need = (spoken + BEAT_GAP_S) * beat.speed if clip else 0.0
+            need = (spoken + BEAT_GAP_S + beat.pause_ms / 1000) * beat.speed if clip else 0.0
             need = max(need, beat.hold_ms / 1000 * beat.speed if beat.hold_ms else (0.0 if clip else 1.0))
             remaining = need - (time.time() - began)
             if remaining > 0:

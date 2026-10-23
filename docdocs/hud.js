@@ -62,6 +62,8 @@
     .dd-big .v { font: 700 calc(var(--u) * 11)/1 'DD Mono', ui-monospace, monospace; color: ${C.amber}; }
     .dd-big .v.after { color: ${C.cyan}; }
     .dd-big .k { font: 700 calc(var(--u) * 2.2)/1 'DD Mono', ui-monospace, monospace; letter-spacing: .16em; color: ${C.muted}; margin-top: calc(var(--u) * 1.6); }
+    .dd-big .live { font: 700 calc(var(--u) * 1.7)/1 'DD Mono', ui-monospace, monospace; letter-spacing: .2em; color: ${C.muted}; opacity: .75; margin-top: calc(var(--u) * 1.1); }
+    .dd-big .live::before { content: ''; display: inline-block; width: .7em; height: .7em; border-radius: 50%; background: ${C.rose}; margin-right: .6em; vertical-align: .05em; }
   `;
 
   function build() {
@@ -76,11 +78,11 @@
     hud.append(labelEl, captionEl, cover);
     document.documentElement.append(style, fx, hud);
     if (cfg.badge) badgeEl = pill(cfg.badge, cfg.badgeTone === 'after' ? C.cyan : C.amber, 'top', 'right');
-    if (cfg.layoutShift && !cfg.bigCounter) clsEl = pill('CLS 0.000', cfg.badgeTone === 'after' ? C.cyan : C.amber, 'top', 'left');
+    if (cfg.layoutShift && !cfg.bigCounter) clsEl = pill('LIVE CLS 0.000', cfg.badgeTone === 'after' ? C.cyan : C.amber, 'top', 'left');
     if (cfg.layoutShift && cfg.bigCounter) {
       bigEl = document.createElement('div');
       bigEl.className = 'dd-big';
-      bigEl.innerHTML = `<div class="v ${cfg.badgeTone === 'after' ? 'after' : ''}">0.000</div><div class="k">LAYOUT SHIFT</div>`;
+      bigEl.innerHTML = `<div class="v ${cfg.badgeTone === 'after' ? 'after' : ''}">0.000</div><div class="k">LAYOUT SHIFT</div><div class="live">LIVE \u00b7 THIS SCREEN</div>`;
       hud.insertBefore(bigEl, cover);
     }
     replay();
@@ -211,7 +213,7 @@
     cls += value;
     for (const [before, after] of pairs) { outline(before, true); outline(after, false); }
     if (!build()) return;
-    if (clsEl) clsEl.textContent = `CLS ${cls.toFixed(3)}`;
+    if (clsEl) clsEl.textContent = `LIVE CLS ${cls.toFixed(3)}`;
     if (bigEl) bigEl.querySelector('.v').textContent = cls.toFixed(3);
   }
 
