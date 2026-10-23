@@ -9,14 +9,18 @@ Status: phase 1. The video half works end to end. Guide chapters, the agents tha
 Python 3.11 or newer.
 
 ```bash
-pipx install git+https://github.com/Dev-of-Codes-LLC/doc-docs
+pipx install "docdocs[kokoro] @ git+https://github.com/Dev-of-Codes-LLC/doc-docs"
 python -m playwright install chromium
-docdocs voices install en_US-joe-medium
+docdocs voices install kokoro
 ```
 
-The voice is [Piper](https://github.com/OHF-Voice/piper1-gpl): local, free, and the same on Windows, Linux and macOS. Piper is GPL-3.0; DOC Docs runs it as a separate program and does not import it, so DOC Docs itself stays MIT.
+The default voice is [Kokoro](https://huggingface.co/hexgrad/Kokoro-82M): local, free, natural-sounding, and the same on Windows, Linux and macOS. Its weights are Apache-2.0. `docdocs voices install kokoro` downloads the model (about 350 MB) into your user folder. Pick a speaker with `"voice": "kokoro:am_michael"` (others: `am_fenrir`, `am_puck`, `am_echo`, `bm_george`, `af_heart` and more).
 
-**Check the voice's licence before you publish.** Each Piper voice is trained on a dataset with its own licence, listed in the voice's `MODEL_CARD` on [Hugging Face](https://huggingface.co/rhasspy/piper-voices). Some are non-commercial only: `en_US-ryan-*` is CC BY-NC-SA, for example. The default, `en_US-joe-medium`, is trained on a CC0 dataset; `en_US-norman-medium`, `en_US-john-medium` and `en_US-kristin-medium` are trained on public-domain LibriVox recordings (checked 2026-10-21). ffmpeg comes with the package (`imageio-ffmpeg`); a system `ffmpeg` on `PATH` is used first if there is one. `docdocs measure` also needs Node.js 18+ for Lighthouse.
+Kokoro's phonemizer and espeak-ng, like [Piper](https://github.com/OHF-Voice/piper1-gpl), are GPL-3.0. DOC Docs runs them as separate programs and never imports them, so DOC Docs itself stays MIT. Piper is still available (`"voice": "piper:<voice>"`) but sounds more robotic.
+
+**Check the voice's licence before you publish.** Each Piper voice is trained on a dataset with its own licence, listed in its `MODEL_CARD` on [Hugging Face](https://huggingface.co/rhasspy/piper-voices). Some are non-commercial only: `en_US-ryan-*` is CC BY-NC-SA, for example. `en_US-joe-medium` is trained on a CC0 dataset (checked 2026-10-21).
+
+ffmpeg comes with the package (`imageio-ffmpeg`); a system `ffmpeg` on `PATH` is used first if there is one. `docdocs measure` also needs Node.js 18+ for Lighthouse.
 
 ## Quick start
 
@@ -37,7 +41,7 @@ The videos land in `examples/cards/build/`. Add `--voice silent` to check timing
 | `docdocs build <storyboard> --format 9:16` | One format only. |
 | `docdocs build <storyboard> --only stitch` | Re-stitches from the saved takes without recording. |
 | `docdocs measure <storyboard>` | Runs Lighthouse on each ref in the `measure` block and writes `measurements.json` next to the storyboard. |
-| `docdocs voices install <voice>` | Downloads a Piper voice into your user folder. `docdocs voices list` shows what you have. |
+| `docdocs voices install kokoro` | Downloads the Kokoro model into your user folder. `docdocs voices install <piper voice>` gets a Piper voice; `docdocs voices list` shows the Piper voices you have. |
 
 ## A storyboard
 
@@ -46,7 +50,7 @@ The videos land in `examples/cards/build/`. Add `--voice silent` to check timing
   "id": "own-it-01-after-action",
   "title": "Own It #1: the page that jumped",
   "formats": ["16:9", "9:16"],
-  "voice": "piper:en_US-joe-medium",
+  "voice": "kokoro:am_michael",
   "systems": {
     "demo": { "repo": "../..", "baseUrl": "http://localhost:4173",
               "install": "npm ci", "build": "npm run build", "serve": "npm run preview" }
@@ -70,6 +74,8 @@ A beat can also carry:
 
 - `label`: a key phrase on screen while the beat plays, like `"everything below *jumps*"`. `*word*` is the amber accent and `_word_` the cyan one. One phrase per idea carries the meaning even with the sound off.
 - `speed`: play the beat faster, for example `2` while a throttled page loads. The video shows a "2× SPEED" badge for that stretch, and the narration still plays at normal speed.
+
+Any action can wait for its moment with `at`: `{"show": "img", "at": "picture"}` fires when the voice reaches "picture" (the first match after the previous anchor in the beat), and `"at": 1200` fires 1.2 s into the beat. Anchor the visual to the word that names it, and the picture lands when it is said.
 
 Every scene type also understands these actions: `wait` (ms), `zoom` (a CSS selector, with `scale` and `ms`) to push in on what is moving, `unzoom`, and `label`.
 

@@ -22,9 +22,9 @@ from pathlib import Path
 
 SCENE_TYPES = ("card", "browser", "code", "terminal", "explain")
 
-# Trained on a CC0 dataset, so it is safe for commercial videos. Check the
-# model card of any other voice: some are non-commercial only.
-DEFAULT_VOICE = "piper:en_US-joe-medium"
+# Kokoro's weights are Apache-2.0, so its voices are safe for commercial videos.
+# Check the licence of any other voice: some Piper voices are non-commercial only.
+DEFAULT_VOICE = "kokoro:am_michael"
 
 
 @dataclass(frozen=True)

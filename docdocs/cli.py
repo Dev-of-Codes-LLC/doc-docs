@@ -66,7 +66,7 @@ def _run(args) -> int:
                 print(model.stem)
             return 0
         if not args.name:
-            print("name a voice, for example: docdocs voices install en_US-joe-medium", file=sys.stderr)
+            print("name a voice, for example: docdocs voices install kokoro", file=sys.stderr)
             return 2
         print(install(args.name))
         return 0

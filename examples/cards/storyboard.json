@@ -2,7 +2,7 @@
   "id": "cards",
   "title": "DOC Docs card check",
   "formats": ["16:9", "9:16"],
-  "voice": "piper:en_US-joe-medium",
+  "voice": "kokoro:am_michael",
   "scenes": [
     { "type": "card", "template": "title",
       "fields": { "kicker": "DOC Docs · Example", "title": "Every card, both formats", "subtitle": "A quick check of the brand templates." },

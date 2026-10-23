@@ -119,6 +119,7 @@ class Capture:
         self.t0 = 0.0
         self._cdp = None
         self._pending: set[asyncio.Task] = set()
+        self._stopping = False
 
     async def start(self) -> None:
         if self.dir.exists():
@@ -133,19 +134,28 @@ class Capture:
         )
 
     def _on_frame(self, params: dict) -> None:
+        if self._stopping:
+            return  # a frame drawn while stopping; the take already ends
         name = f"{len(self.frames):06d}.png"
         (self.dir / name).write_bytes(base64.b64decode(params["data"]))
         at = params["metadata"].get("timestamp", time.time()) - self.t0
         self.frames.append((max(0.0, at), name))
-        task = asyncio.ensure_future(self._cdp.send("Page.screencastFrameAck", {"sessionId": params["sessionId"]}))
+        task = asyncio.ensure_future(self._ack(params["sessionId"]))
         self._pending.add(task)
         task.add_done_callback(self._pending.discard)
+
+    async def _ack(self, session_id: int) -> None:
+        try:
+            await self._cdp.send("Page.screencastFrameAck", {"sessionId": session_id})
+        except Exception:  # noqa: BLE001 - the page may close while a frame is in flight
+            pass
 
     def now(self) -> float:
         return time.time() - self.t0
 
     async def stop(self) -> float:
         duration = self.now()
+        self._stopping = True
         await self._cdp.send("Page.stopScreencast")
         if self._pending:
             await asyncio.gather(*self._pending, return_exceptions=True)
@@ -263,6 +273,11 @@ class SceneContext:
     async def play(self, run_action) -> None:
         """Run every beat: say the sentence while its actions run, then wait for the longer of the two.
 
+        An action with "at" waits for its moment: "at": "picture" fires when
+        the voice reaches that word (the first match after the previous
+        anchor), "at": 1200 fires 1.2 s into the beat. Actions without "at"
+        run straight away, in order.
+
         A beat with speed > 1 runs in real time but is played back faster, so
         it waits until its sentence fits the sped-up playback.
         """
@@ -270,6 +285,8 @@ class SceneContext:
             start = self.capture.now()
             began = time.time()
             clip = self.clips.get(beat.say) if beat.say else None
+            chunks = timings(clip.text, clip.path, stretch=beat.speed) if clip else []
+            words = [(w, t) for c in chunks for w, t in zip(c["words"], c["times"])]
             if beat.label is not None:
                 self.hud_state["label"] = beat.label
                 await self.hud("label", beat.label)
@@ -277,13 +294,31 @@ class SceneContext:
                 self.hud_state["speed"] = beat.speed
                 await self.hud("speed", beat.speed)
             if clip and self.captions:
-                spec = {"chunks": timings(clip.text, clip.path, stretch=beat.speed), "t0": round(began * 1000)}
+                spec = {"chunks": chunks, "t0": round(began * 1000)}
                 self.hud_state["caption"] = spec
                 await self.hud("caption", spec)
+            cursor = 0
             for action in beat.actions:
+                if "at" in action:
+                    action = dict(action)
+                    at = action.pop("at")
+                    if isinstance(at, (int, float)):
+                        target_ms = at * beat.speed
+                    else:
+                        found = next((k for k in range(cursor, len(words))
+                                      if _bare(words[k][0]) == _bare(str(at))), None)
+                        if found is None:
+                            raise ValueError(f"{self.scene.label}: 'at': {at!r} is not a word of {beat.say!r}")
+                        cursor = found + 1
+                        target_ms = words[found][1][0]
+                    wait = target_ms / 1000 - (time.time() - began)
+                    if wait > 0:
+                        await asyncio.sleep(wait)
                 if not await self.common(action):
                     await run_action(action)
-            need = (clip.seconds + BEAT_GAP_S) * beat.speed if clip else 0.0
+            # Time the beat from the end of the speech, not the end of the clip's trailing silence.
+            spoken = clip.speech_end if clip else 0.0
+            need = (spoken + BEAT_GAP_S) * beat.speed if clip else 0.0
             need = max(need, beat.hold_ms / 1000 * beat.speed if beat.hold_ms else (0.0 if clip else 1.0))
             remaining = need - (time.time() - began)
             if remaining > 0:
@@ -298,6 +333,10 @@ class SceneContext:
         await self.hud("caption", None)
 
 
+def _bare(word: str) -> str:
+    return "".join(ch for ch in word.lower() if ch.isalnum())
+
+
 def scene_dir(storyboard: Storyboard, fmt: Format, scene: Scene) -> Path:
     return storyboard.build_dir / fmt.slug / f"scene-{scene.index:02d}"
 
@@ -310,11 +349,9 @@ async def record(storyboard: Storyboard, only: set[int] | None = None, formats: 
     from docdocs.scenes import RECORDERS
 
     voice = voice or Voice(storyboard.voice, speed=storyboard.voice_speed)
-    clips = {}
-    for scene in storyboard.scenes:
-        for beat in scene.beats:
-            if beat.say and beat.say not in clips:
-                clips[beat.say] = voice.clip(beat.say)
+    says = [beat.say for scene in storyboard.scenes for beat in scene.beats if beat.say]
+    voice.prepare(says)
+    clips = {say: voice.clip(say) for say in dict.fromkeys(says)}
     log(f"voice: {len(clips)} sentences ready ({voice.spec}, speed {voice.speed})")
 
     measurements = None

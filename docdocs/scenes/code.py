@@ -35,13 +35,17 @@ CSS = """
 
 
 def git_diff(repo, spec: str, files: list[str]) -> str:
-    cmd = ["git", "-C", str(repo), "diff", "--no-color", "-U3", spec, "--", *files]
-    result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
-    if result.returncode != 0:
-        raise RuntimeError(f"git diff {spec}: {result.stderr.strip()}")
-    if not result.stdout.strip():
-        raise RuntimeError(f"git diff {spec} -- {' '.join(files)} is empty")
-    return result.stdout
+    """The diff, file by file in the order the storyboard lists them (git would sort them by path)."""
+    out = []
+    for path in files or [None]:
+        cmd = ["git", "-C", str(repo), "diff", "--no-color", "-U3", spec, "--", *([path] if path else [])]
+        result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
+        if result.returncode != 0:
+            raise RuntimeError(f"git diff {spec}: {result.stderr.strip()}")
+        if not result.stdout.strip():
+            raise RuntimeError(f"git diff {spec} -- {path or '(all)'} is empty")
+        out.append(result.stdout)
+    return "".join(out)
 
 
 def render(diff: str) -> str:

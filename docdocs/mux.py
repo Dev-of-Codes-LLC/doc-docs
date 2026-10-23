@@ -56,10 +56,27 @@ def _out_time(take: Take, at: float) -> float:
     return out
 
 
-def _whoosh(seconds: float = 0.55) -> array.array:
+def _resample(clip: array.array, src: int, dst: int) -> array.array:
+    """Linear resampling, plenty for speech."""
+    n = round(len(clip) * dst / src)
+    out = array.array("h", bytes(2 * n))
+    step = src / dst
+    last = len(clip) - 1
+    for i in range(n):
+        x = i * step
+        j = int(x)
+        if j >= last:
+            out[i] = clip[last]
+        else:
+            f = x - j
+            out[i] = int(clip[j] * (1 - f) + clip[j + 1] * f)
+    return out
+
+
+def _whoosh(rate: int = SAMPLE_RATE, seconds: float = 0.55) -> array.array:
     """A soft, synthesized whoosh: filtered noise that swells and fades. No samples, no licence."""
     rng = random.Random(7)
-    n = round(seconds * SAMPLE_RATE)
+    n = round(seconds * rate)
     out = array.array("h", bytes(2 * n))
     low = 0.0
     for i in range(n):
@@ -109,26 +126,34 @@ def stitch(storyboard: Storyboard, fmt: Format, log=print) -> tuple[Path, Path]:
             at += _rate(take, at) / FPS
     total = len(schedule) / FPS
 
-    samples = array.array("h", bytes(2 * round(total * SAMPLE_RATE)))
+    # The track runs at the voice's own rate (Piper 22.05 kHz, Kokoro 24 kHz).
+    first = next((mk.clip for _, tk in takes for mk in tk.marks), None)
+    rate = SAMPLE_RATE
+    if first:
+        with wave.open(first) as wf:
+            rate = wf.getframerate()
+    samples = array.array("h", bytes(2 * round(total * rate)))
     cues = []
     for (sdir, take), offset in zip(takes, scene_starts):
         for mark in take.marks:
             begin = offset + _out_time(take, mark.start)
             with wave.open(mark.clip) as wf:
                 clip = array.array("h", wf.readframes(wf.getnframes()))
-            at = round(begin * SAMPLE_RATE)
+                if wf.getframerate() != rate:
+                    clip = _resample(clip, wf.getframerate(), rate)
+            at = round(begin * rate)
             room = max(0, len(samples) - at)
             samples[at:at + min(len(clip), room)] = clip[:room]
             cues.append((begin, begin + mark.seconds, mark.text))
     if storyboard.sfx:
-        sweep = _whoosh()
+        sweep = _whoosh(rate)
         for cut in scene_starts[1:]:
-            _mix(samples, sweep, round((cut - 0.28) * SAMPLE_RATE))
+            _mix(samples, sweep, round((cut - 0.28) * rate))
 
     with wave.open(str(audio_path), "wb") as wf:
         wf.setnchannels(1)
         wf.setsampwidth(2)
-        wf.setframerate(SAMPLE_RATE)
+        wf.setframerate(rate)
         wf.writeframes(samples.tobytes())
 
     srt_path.write_text(
