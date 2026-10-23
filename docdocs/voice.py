@@ -41,17 +41,18 @@ def voices_dir() -> Path:
 
 
 class Voice:
-    def __init__(self, spec: str):
+    def __init__(self, spec: str, speed: float = 1.0):
         provider, _, name = spec.partition(":")
         if provider not in ("piper", "silent"):
             raise VoiceError(f"unknown voice {spec!r}: use piper:<voice> or silent")
         self.spec = spec
+        self.speed = speed
         self.provider = provider
         self.name = name
         self.cache = user_dir() / "cache" / "voice" / (spec.replace(":", "-") or "silent")
 
     def clip(self, text: str) -> Clip:
-        key = hashlib.sha256(f"{self.spec}\n{text}".encode()).hexdigest()[:20]
+        key = hashlib.sha256(f"{self.spec}\n{self.speed}\n{text}".encode()).hexdigest()[:20]
         path = self.cache / f"{key}.wav"
         if not path.exists():
             self.cache.mkdir(parents=True, exist_ok=True)
@@ -59,7 +60,7 @@ class Voice:
             if self.provider == "piper":
                 self._synthesize_piper(text, tmp)
             else:
-                _write_silence(tmp, _estimate_seconds(text))
+                _write_silence(tmp, _estimate_seconds(text) / self.speed)
             tmp.replace(path)
         return Clip(text=text, path=path, seconds=wav_seconds(path))
 
@@ -68,7 +69,7 @@ class Voice:
         if not model.exists():
             raise VoiceError(f"voice {self.name!r} is not installed. Run: docdocs voices install {self.name}")
         result = subprocess.run(
-            [sys.executable, "-m", "piper", "-m", str(model), "-f", str(out)],
+            [sys.executable, "-m", "piper", "-m", str(model), "-f", str(out), "--length-scale", f"{1 / self.speed:.3f}"],
             input=" ".join(text.split()), capture_output=True, text=True, encoding="utf-8",
         )
         if result.returncode != 0 or not out.exists():

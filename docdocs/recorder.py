@@ -3,8 +3,12 @@
 Every scene is a web page played in headless Chromium. Frames come from the
 Chrome DevTools Protocol screencast as PNG, each with the time it was drawn,
 so nothing is encoded until the final stitch. A scene's take (its frames,
-length and narrated beats) is saved next to its frames, so one scene can be
-re-recorded without the others.
+length, narrated beats and sped-up stretches) is saved next to its frames,
+so one scene can be re-recorded without the others.
+
+Every page also gets the HUD (hud.js): key-phrase labels, captions, badges,
+zooms and the fade through navy between scenes are drawn in the page while
+it is recorded, timed by the same clock as the narration.
 """
 
 import asyncio
@@ -17,13 +21,15 @@ import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
+from docdocs.captions import timings
 from docdocs.hosts import check_url
 from docdocs.paths import package_dir
 from docdocs.storyboard import Format, Scene, Storyboard
 from docdocs.voice import Clip, Voice
 
-BEAT_GAP_S = 0.35  # silence after each sentence
-LEAD_IN_S = 0.4  # time on screen before the first beat of a scene
+BEAT_GAP_S = 0.15  # silence after each sentence: the reference pace is 0.1-0.4 s
+LEAD_IN_S = 0.1  # time on screen before the first beat of a scene
+FADE_MS = 320  # the fade through navy at each scene edge
 
 
 @dataclass
@@ -41,6 +47,7 @@ class Take:
     duration: float
     frames: list[tuple[float, str]] = field(default_factory=list)  # (seconds from scene start, file)
     marks: list[Mark] = field(default_factory=list)
+    segments: list[tuple[float, float, float]] = field(default_factory=list)  # (start, end, speed) in scene seconds
 
     def save(self, path: Path) -> None:
         path.write_text(json.dumps(asdict(self), indent=1), encoding="utf-8")
@@ -52,6 +59,7 @@ class Take:
             duration=raw["duration"],
             frames=[tuple(f) for f in raw["frames"]],
             marks=[Mark(**m) for m in raw["marks"]],
+            segments=[tuple(s) for s in raw.get("segments", [])],
         )
 
 
@@ -61,6 +69,7 @@ class Brand:
         if not (self.dir / "brand.css").exists():
             raise FileNotFoundError(f"brand folder {self.dir} has no brand.css")
         self.meta = json.loads((self.dir / "brand.json").read_text(encoding="utf-8"))
+        self._font_css = None
 
     def template(self, name: str) -> string.Template:
         path = self.dir / "templates" / f"{name}.html"
@@ -76,6 +85,17 @@ class Brand:
             "<link rel='stylesheet' href='brand.css'>"
             f"<title>{html.escape(title)}</title>{head}</head><body>{body}</body></html>"
         )
+
+    def font_css(self) -> str:
+        """The HUD's fonts as data URIs, so they load on any page, including the product's own."""
+        if self._font_css is None:
+            faces = {"DD Literata": "literata-400", "DD Syne": "syne-800", "DD Mono": "jetbrains-mono-700"}
+            rules = []
+            for family, file in faces.items():
+                data = base64.b64encode((self.dir / "fonts" / f"{file}.woff2").read_bytes()).decode()
+                rules.append(f"@font-face {{ font-family: '{family}'; src: url(data:font/woff2;base64,{data}) format('woff2'); }}")
+            self._font_css = "\n".join(rules)
+        return self._font_css
 
 
 def fill(template: string.Template, fields: dict) -> str:
@@ -136,7 +156,7 @@ class Capture:
 
 
 class SceneContext:
-    """What a scene recorder gets: the page, the clips, and the beat player."""
+    """What a scene recorder gets: the page, the clips, the HUD and the beat player."""
 
     def __init__(self, storyboard: Storyboard, scene: Scene, fmt: Format, page, scene_dir: Path,
                  brand: Brand, clips: dict[str, Clip], measurements: dict | None):
@@ -150,9 +170,22 @@ class SceneContext:
         self.measurements = measurements
         self.capture = Capture(page, fmt, scene_dir / "frames")
         self.marks: list[Mark] = []
+        self.segments: list[tuple[float, float, float]] = []
         self.file_roots = [storyboard.build_dir, brand.dir, package_dir()]
+        # Cards already show their words, so they get no captions unless they ask.
+        self.captions = fmt.name in storyboard.captions and scene.raw.get("captions", scene.type != "card")
+        self.hud_state: dict = {}
+
+    # -- setup ---------------------------------------------------------------
+
+    async def prepare(self, **config) -> None:
+        """Inject the HUD into every page this scene opens. Call before the first navigation."""
+        cfg = {"fontCss": self.brand.font_css(), **config}
+        script = f"window.__docdocs = {json.dumps(cfg)};\n" + (package_dir() / "hud.js").read_text(encoding="utf-8")
+        await self.page.add_init_script(script)
 
     def check(self, url: str) -> None:
+        last = None
         for root in self.file_roots:
             try:
                 check_url(url, root)
@@ -170,25 +203,99 @@ class SceneContext:
         await self.page.goto(url)
         await self.page.evaluate("document.fonts.ready")
 
-    async def play(self, run_action) -> None:
-        """Run every beat: say the sentence while its actions run, then wait for the longer of the two."""
+    # -- HUD -----------------------------------------------------------------
+
+    async def hud(self, method: str, *args) -> None:
+        await self.page.evaluate(
+            "([m, args]) => window.__docdocsHud && window.__docdocsHud[m](...args)", [method, list(args)]
+        )
+
+    async def restore_hud(self) -> None:
+        """Re-apply labels, captions and badges after a navigation replaced the page."""
+        try:
+            await self.page.wait_for_function("() => !!window.__docdocsHud", timeout=10000)
+            await self.page.evaluate("s => window.__docdocsHud.restore(s)", self.hud_state)
+        except Exception:  # noqa: BLE001 - a page that never loads keeps going without its HUD
+            pass
+
+    # -- the scene's life ----------------------------------------------------
+
+    async def begin(self) -> None:
+        """Start recording behind the navy cover, then fade it out."""
+        await self.hud("cover", True, 0)
+        await self.capture.start()
+        await asyncio.sleep(0.05)
+        await self.hud("cover", False, FADE_MS)
         await asyncio.sleep(LEAD_IN_S)
+
+    async def end(self) -> Take:
+        """Fade to navy, stop recording, and return the take."""
+        await self.hud("label", None)
+        await self.hud("cover", True, FADE_MS)
+        await asyncio.sleep(FADE_MS / 1000 + 0.05)
+        duration = await self.capture.stop()
+        return Take(duration=duration, frames=self.capture.frames, marks=self.marks, segments=self.segments)
+
+    async def common(self, action: dict) -> bool:
+        """Actions every scene type understands. Return False if this one is not common."""
+        (name, value), *_ = action.items()
+        if name == "wait":
+            await asyncio.sleep(float(value) / 1000)
+        elif name == "zoom":
+            scale = action.get("scale", 1.8)
+            if isinstance(scale, dict):  # per format: {"16:9": 1.35, "9:16": 1.15}
+                scale = scale.get(self.fmt.name, 1.0)
+            spec = {"target": value, "scale": float(scale), "ms": int(action.get("ms", 700))}
+            self.hud_state["zoom"] = spec
+            await self.hud("zoom", spec)
+            await asyncio.sleep(spec["ms"] / 1000)
+        elif name == "unzoom":
+            self.hud_state["zoom"] = None
+            await self.hud("zoom", None)
+            await asyncio.sleep(0.7)
+        elif name == "label":
+            self.hud_state["label"] = value
+            await self.hud("label", value)
+        else:
+            return False
+        return True
+
+    async def play(self, run_action) -> None:
+        """Run every beat: say the sentence while its actions run, then wait for the longer of the two.
+
+        A beat with speed > 1 runs in real time but is played back faster, so
+        it waits until its sentence fits the sped-up playback.
+        """
         for beat in self.scene.beats:
             start = self.capture.now()
             began = time.time()
             clip = self.clips.get(beat.say) if beat.say else None
+            if beat.label is not None:
+                self.hud_state["label"] = beat.label
+                await self.hud("label", beat.label)
+            if beat.speed != 1:
+                self.hud_state["speed"] = beat.speed
+                await self.hud("speed", beat.speed)
+            if clip and self.captions:
+                spec = {"chunks": timings(clip.text, clip.path, stretch=beat.speed), "t0": round(began * 1000)}
+                self.hud_state["caption"] = spec
+                await self.hud("caption", spec)
             for action in beat.actions:
-                await run_action(action)
-            need = clip.seconds + BEAT_GAP_S if clip else 0.0
-            need = max(need, beat.hold_ms / 1000 if beat.hold_ms else (0.0 if clip else 1.0))
+                if not await self.common(action):
+                    await run_action(action)
+            need = (clip.seconds + BEAT_GAP_S) * beat.speed if clip else 0.0
+            need = max(need, beat.hold_ms / 1000 * beat.speed if beat.hold_ms else (0.0 if clip else 1.0))
             remaining = need - (time.time() - began)
             if remaining > 0:
                 await asyncio.sleep(remaining)
+            if beat.speed != 1:
+                self.segments.append((start, self.capture.now(), beat.speed))
+                self.hud_state["speed"] = None
+                await self.hud("speed", None)
             if clip:
                 self.marks.append(Mark(start=start, text=clip.text, clip=str(clip.path), seconds=clip.seconds))
-
-    def take(self, duration: float) -> Take:
-        return Take(duration=duration, frames=self.capture.frames, marks=self.marks)
+        self.hud_state["caption"] = None
+        await self.hud("caption", None)
 
 
 def scene_dir(storyboard: Storyboard, fmt: Format, scene: Scene) -> Path:
@@ -202,13 +309,13 @@ async def record(storyboard: Storyboard, only: set[int] | None = None, formats: 
 
     from docdocs.scenes import RECORDERS
 
-    voice = voice or Voice(storyboard.voice)
+    voice = voice or Voice(storyboard.voice, speed=storyboard.voice_speed)
     clips = {}
     for scene in storyboard.scenes:
         for beat in scene.beats:
             if beat.say and beat.say not in clips:
                 clips[beat.say] = voice.clip(beat.say)
-    log(f"voice: {len(clips)} sentences ready ({voice.spec})")
+    log(f"voice: {len(clips)} sentences ready ({voice.spec}, speed {voice.speed})")
 
     measurements = None
     mpath = storyboard.base_dir / "measurements.json"

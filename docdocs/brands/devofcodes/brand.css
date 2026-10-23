@@ -170,3 +170,50 @@ html, body {
   .metric { flex-direction: column; align-items: flex-start; gap: calc(var(--u) * 3); }
   .metric .arrow { transform: rotate(90deg); margin-left: calc(var(--u) * 4); }
 }
+
+/* Hook: a serif question that builds word by word, accent in amber. */
+.hook-text {
+  font-family: var(--body);
+  font-weight: 400;
+  font-size: calc(var(--u) * 10);
+  line-height: 1.08;
+  letter-spacing: -0.02em;
+  margin: 0;
+  max-width: 16ch;
+}
+.hook-text .w { display: inline-block; }
+.hook-text em { font-style: normal; color: var(--amber); }
+@media (orientation: portrait) { .hook-text { font-size: calc(var(--u) * 13); } }
+
+/* Sting: the series mark, two seconds. */
+.sting { align-items: center; text-align: center; }
+.sting-title {
+  font-family: var(--display);
+  font-weight: 800;
+  font-size: calc(var(--u) * 16);
+  letter-spacing: 0.02em;
+  margin: 0;
+}
+.sting-sub {
+  font-family: var(--mono);
+  font-size: calc(var(--u) * 2.6);
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: var(--cyan);
+  margin: calc(var(--u) * 3) 0 0;
+}
+.sting-bar {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  height: calc(var(--u) * 0.6);
+  width: 100%;
+  background: linear-gradient(90deg, transparent, var(--cyan), transparent);
+  transform: scaleX(0);
+  animation: sweep 900ms cubic-bezier(.3,.7,.2,1) 60ms forwards;
+  opacity: 0.55;
+}
+@keyframes sweep { 60% { transform: scaleX(1); opacity: .7; } to { transform: scaleX(1); opacity: 0; } }
+
+/* Outro */
+.outro .next { font-family: var(--mono); font-size: calc(var(--u) * 2.8); color: var(--amber); margin: calc(var(--u) * 4) 0 0; }

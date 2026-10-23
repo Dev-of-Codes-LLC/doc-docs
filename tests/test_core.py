@@ -108,3 +108,57 @@ class Captions(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Timing(unittest.TestCase):
+    def test_caption_chunks_follow_the_words(self):
+        import wave as _wave
+        from docdocs.captions import timings
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "clip.wav"
+            with _wave.open(str(path), "wb") as wf:
+                wf.setnchannels(1)
+                wf.setsampwidth(2)
+                wf.setframerate(22050)
+                # 0.2 s silence, 1.6 s of signal, 0.2 s silence
+                quiet, loud = b"\x00\x00" * 4410, (b"\x00\x40" + b"\x00\xc0") * 17640
+                wf.writeframes(quiet + loud + quiet)
+            chunks = timings("The grey blocks are too small, so the cards shove everything down.", path)
+        words = [w for c in chunks for w in c["words"]]
+        self.assertEqual(" ".join(words), "The grey blocks are too small, so the cards shove everything down.")
+        times = [t for c in chunks for t in c["times"]]
+        self.assertGreaterEqual(times[0][0], 190)  # speech starts after the leading silence
+        self.assertLessEqual(times[-1][1], 1810)
+        self.assertTrue(all(a < b for a, b in times))
+        self.assertTrue(all(len(c["words"]) <= 6 for c in chunks))
+        self.assertEqual(chunks[0]["words"][-1], "small,")  # breaks after punctuation
+
+    def test_speed_maps_take_time_to_video_time(self):
+        from docdocs.mux import _out_time, _rate
+        from docdocs.recorder import Take
+
+        take = Take(duration=10, segments=[(2.0, 6.0, 2.0)])
+        self.assertEqual(_rate(take, 1.0), 1.0)
+        self.assertEqual(_rate(take, 3.0), 2.0)
+        self.assertEqual(_out_time(take, 2.0), 2.0)
+        self.assertEqual(_out_time(take, 6.0), 4.0)  # four seconds at 2x take two
+        self.assertEqual(_out_time(take, 8.0), 6.0)
+
+
+class Series(unittest.TestCase):
+    def test_intro_after_the_hook_and_placeholders(self):
+        tmp = Path(tempfile.mkdtemp())
+        (tmp / "series.json").write_text(json.dumps({
+            "introAfterFirst": True,
+            "intro": [{"type": "card", "template": "sting", "fields": {"subtitle": "Episode {episode}"}}],
+            "outro": [{"type": "card", "template": "outro", "fields": {"next": "Next: {next}"}}],
+        }), encoding="utf-8")
+        path = tmp / "ep" / "storyboard.json"
+        path.parent.mkdir()
+        path.write_text(json.dumps({"id": "x", "title": "X", "episode": 3, "next": "the cache", "series": "../series.json",
+                                    "scenes": [{"type": "card", "template": "hook"}, {"type": "card"}]}), encoding="utf-8")
+        sb = load(path)
+        self.assertEqual([s.raw.get("template") for s in sb.scenes], ["hook", "sting", None, "outro"])
+        self.assertEqual(sb.scenes[1].raw["fields"]["subtitle"], "Episode 3")
+        self.assertEqual(sb.scenes[3].raw["fields"]["next"], "Next: the cache")

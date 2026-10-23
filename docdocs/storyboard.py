@@ -4,13 +4,23 @@ A storyboard is one JSON file: the video's id and title, the systems it
 films, the formats to render, and a list of scenes. Each scene is a list of
 beats; a beat is one sentence of narration plus the actions it describes.
 Paths in a storyboard are relative to the storyboard's folder.
+
+Optional top-level settings:
+
+- voiceSpeed  1.0 is Piper's pace; 1.08 is a little brisker
+- captions    formats that get word-by-word captions, e.g. ["9:16"]
+- series      a JSON file with "intro" and "outro" scene lists, added to
+              the start and end of every episode that names it
+- sfx         true adds a soft whoosh at each scene change
+- music       {"file": "music/bed.mp3", "volume": 0.18}: a bed that dips
+              under the voice. Use only music you have the rights to.
 """
 
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
-SCENE_TYPES = ("card", "browser", "code", "terminal")
+SCENE_TYPES = ("card", "browser", "code", "terminal", "explain")
 
 # Trained on a CC0 dataset, so it is safe for commercial videos. Check the
 # model card of any other voice: some are non-commercial only.
@@ -49,6 +59,8 @@ class Beat:
     say: str | None
     actions: list[dict]
     hold_ms: int
+    label: str | None = None  # a key phrase on screen; *word* is the accent
+    speed: float = 1.0  # play this beat faster; the video says so on screen
 
 
 @dataclass
@@ -74,6 +86,10 @@ class Storyboard:
     measure: dict | None
     voice: str
     raw: dict = field(repr=False)
+    voice_speed: float = 1.0
+    captions: frozenset = frozenset()
+    sfx: bool = False
+    music: dict | None = None
 
     @property
     def base_dir(self) -> Path:
@@ -117,8 +133,24 @@ def load(path: str | Path) -> Storyboard:
         if "baseUrl" not in system:
             problems.append(f"system {name!r}: missing 'baseUrl'")
 
+    scene_list = list(raw.get("scenes", []))
+    if raw.get("series"):
+        series_path = (path.parent / raw["series"]).resolve()
+        try:
+            text = series_path.read_text(encoding="utf-8")
+            # {episode}, {title} and {next} in the series file come from this storyboard.
+            for key in ("episode", "title", "next"):
+                text = text.replace("{" + key + "}", json.dumps(str(raw.get(key, "")))[1:-1])
+            series = json.loads(text)
+        except (OSError, json.JSONDecodeError) as e:
+            raise StoryboardError(f"{path}: cannot read series file {series_path}: {e}") from None
+        intro, outro = list(series.get("intro", [])), list(series.get("outro", []))
+        # The hook comes first when the series says so: hook, then the intro sting.
+        cut = 1 if series.get("introAfterFirst") and scene_list else 0
+        scene_list = scene_list[:cut] + intro + scene_list[cut:] + outro
+
     scenes = []
-    for i, s in enumerate(raw.get("scenes", []), start=1):
+    for i, s in enumerate(scene_list, start=1):
         kind = s.get("type")
         if kind not in SCENE_TYPES:
             problems.append(f"scene {i}: type must be one of {', '.join(SCENE_TYPES)}")
@@ -131,7 +163,11 @@ def load(path: str | Path) -> Storyboard:
             if not isinstance(actions, list):
                 problems.append(f"scene {i}: a beat's 'do' must be a list")
                 actions = []
-            beats.append(Beat(say=b.get("say"), actions=actions, hold_ms=int(b.get("hold", 0))))
+            speed = float(b.get("speed", 1))
+            if not 0.5 <= speed <= 8:
+                problems.append(f"scene {i}: a beat's speed must be between 0.5 and 8")
+            beats.append(Beat(say=b.get("say"), actions=actions, hold_ms=int(b.get("hold", 0)),
+                              label=b.get("label"), speed=speed))
         if not beats:
             # A scene with no beats still shows for a moment.
             beats.append(Beat(say=None, actions=[], hold_ms=int(s.get("hold", 2500))))
@@ -150,4 +186,8 @@ def load(path: str | Path) -> Storyboard:
         measure=raw.get("measure"),
         voice=raw.get("voice", DEFAULT_VOICE),
         raw=raw,
+        voice_speed=float(raw.get("voiceSpeed", 1.0)),
+        captions=frozenset(raw.get("captions", [])),
+        sfx=bool(raw.get("sfx", False)),
+        music=raw.get("music"),
     )

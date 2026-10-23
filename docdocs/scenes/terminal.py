@@ -10,7 +10,8 @@ first line is shown as ~/<folder name>, so local paths never reach the video;
 add more {"redact": [["pattern", "replacement"]]} pairs if needed.
 
 Actions: reveal (a number, "tools" for everything before the final answer,
-"final" for the rest, or "all"), every (ms between items), scroll, wait.
+"final" for the rest, or "all"), every (ms between items), scroll, and the
+common wait, zoom, unzoom and label.
 """
 
 import asyncio
@@ -126,12 +127,13 @@ async def record(ctx: SceneContext) -> Take:
         + "".join(f"<div class='item {k}'>{h}</div>" for k, h in items)
         + "</div></div></div>"
     )
+    await ctx.prepare(labelBackdrop=True)
     await ctx.show_html(ctx.brand.page(body, title="terminal", head=f"<style>{CSS}</style>"))
     shown = 0
     if prompt:
         await ctx.page.evaluate("document.querySelector('.item').classList.add('shown')")
         shown = 1
-    await ctx.capture.start()
+    await ctx.begin()
 
     async def reveal_to(target: int, every_ms: float) -> None:
         nonlocal shown
@@ -159,10 +161,8 @@ async def record(ctx: SceneContext) -> Take:
         elif name == "scroll":
             await ctx.page.evaluate("y => document.getElementById('scroll').scrollBy({top: y, behavior: 'smooth'})", value)
             await asyncio.sleep(0.9)
-        elif name == "wait":
-            await asyncio.sleep(float(value) / 1000)
         else:
             raise ValueError(f"{ctx.scene.label}: unknown terminal action {name!r}")
 
     await ctx.play(act)
-    return ctx.take(await ctx.capture.stop())
+    return await ctx.end()

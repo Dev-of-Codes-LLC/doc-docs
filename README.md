@@ -66,14 +66,32 @@ The videos land in `examples/cards/build/`. Add `--voice silent` to check timing
 
 A **beat** is one sentence of narration (`say`) plus the actions it describes (`do`). The beat lasts as long as the longer of the two, plus a short pause; `hold` (ms) sets a minimum. Paths are relative to the storyboard's folder.
 
+A beat can also carry:
+
+- `label`: a key phrase on screen while the beat plays, like `"everything below *jumps*"`. `*word*` is the amber accent and `_word_` the cyan one. One phrase per idea carries the meaning even with the sound off.
+- `speed`: play the beat faster, for example `2` while a throttled page loads. The video shows a "2× SPEED" badge for that stretch, and the narration still plays at normal speed.
+
+Every scene type also understands these actions: `wait` (ms), `zoom` (a CSS selector, with `scale` and `ms`) to push in on what is moving, `unzoom`, and `label`.
+
+### Storyboard settings
+
+| Key | What it does |
+| --- | --- |
+| `voiceSpeed` | 1.0 is Piper's pace; 1.08 is a little brisker |
+| `captions` | Formats that get word-by-word captions, for example `["9:16"]`. Each word lights up as it is said. |
+| `series` | A JSON file with `intro` and `outro` scene lists, added to every episode that names it. `"introAfterFirst": true` puts the intro after the episode's first scene (the hook). `{episode}`, `{title}` and `{next}` in the series file come from the storyboard. |
+| `sfx` | `true` adds a soft, synthesized whoosh at each scene change |
+| `music` | `{"file": "music/bed.mp3", "volume": 0.18}`: a bed that dips under the voice and fades out at the end. Use only music you have the rights to. |
+
 ### Scenes
 
 | Type | Shows | Settings | Actions |
 | --- | --- | --- | --- |
-| `card` | A brand card | `template`: `title`, `text`, `metric` or `credit`; `fields` for its text. `metric` takes `metric` (`cls` or `lcp`) and reads its numbers from `measurements.json`, never from the storyboard. | none |
-| `browser` | The product | `system`; `checkout` (a git ref to build and serve first); `network` (`slow-4g`); `overlay: ["layout-shift"]` outlines every element that moves and shows a running CLS; `badge` and `badgeColor` (`before` or `after`). | `goto`, `waitFor`, `wait`, `scroll`, `click`, `reload` |
-| `code` | A real diff | `repo`, `diff` (`a..b`), `files`, `title` | `file` (scroll to the nth file), `scroll`, `wait` |
-| `terminal` | A recorded Claude Code run | `take`: the saved output of `claude -p "<prompt>" --output-format stream-json --verbose`; `prompt`; `redact` (extra `[pattern, replacement]` pairs) | `reveal` (a number, `tools`, `final` or `all`; `every` sets the gap in ms), `scroll`, `wait` |
+| `card` | A brand card | `template`: `hook` (a question that builds word by word; `fields.text`), `title`, `text`, `metric`, `credit`, `sting` (a two-second series mark) or `outro`; `fields` for its text. `metric` takes `metric` (`cls` or `lcp`) and reads its numbers from `measurements.json`, never from the storyboard. | none |
+| `browser` | The product | `system`; `checkout` (a git ref to build and serve first); `network` (`slow-4g`); `overlay: ["layout-shift"]` outlines every element that moves and shows a running CLS; `badge` and `badgeColor` (`before` or `after`). | `goto`, `waitFor`, `scroll`, `click`, `reload` |
+| `code` | A real diff | `repo`, `diff` (`a..b`), `files`, `title` | `file` (scroll to the nth file), `scroll` |
+| `terminal` | A recorded Claude Code run | `take`: the saved output of `claude -p "<prompt>" --output-format stream-json --verbose`; `prompt`; `redact` (extra `[pattern, replacement]` pairs) | `reveal` (a number, `tools`, `final` or `all`; `every` sets the gap in ms), `scroll` |
+| `explain` | An animated diagram on one continuous canvas | `elements`, placed in percent of the frame (`at` as a list, or per format: `{"16:9": [...], "9:16": [...]}`). Kinds: `text`, `box` (`style` `dashed`, `solid` or `fill`), `dot`, `dots` (a scattered field), `axes`, `line` (from and to an element or a point; it draws on), `pill` (parts that light up), `counter`, `check`. | `show`, `hide`, `set` (move, resize, retone or retext an element), `light`, `count`, `pulse` |
 
 ### How a `checkout` is served
 
@@ -87,7 +105,9 @@ Each ref gets its own git worktree in your user folder, so the repo you work in 
 
 ## How it records
 
-Every scene is a web page in headless Chromium (Playwright). Frames come from the Chrome DevTools Protocol screencast as lossless PNGs, each with the time it was drawn. Narration is one cached WAV per sentence. The stitch holds each frame for exactly as long as it was on screen, places each clip where its beat started, and encodes once to H.264 at 30 fps, so picture and voice cannot drift.
+Every scene is a web page in headless Chromium (Playwright). Frames come from the Chrome DevTools Protocol screencast as lossless PNGs, each with the time it was drawn. Narration is one cached WAV per sentence. For every 1/30 s of the video, the stitch picks the frame that was on screen at that moment, places each clip where its beat started, and encodes once to H.264, so picture and voice cannot drift.
+
+Labels, captions, badges, zooms and the fade through navy between scenes are drawn by a small script (`hud.js`) injected into every scene page, the product's own pages included, on a layer that the page's layout cannot see. They are in the recorded frames, timed by the same clock as the narration, so nothing is added afterwards.
 
 ## Brand
 
@@ -95,7 +115,7 @@ Every scene is a web page in headless Chromium (Playwright). Frames come from th
 
 ## Roadmap
 
-1. **Phase 1 (this):** storyboards, four scene types, Piper, stitching, `measure`, both formats.
+1. **Phase 1 (this):** storyboards, five scene types, Piper, labels and captions, speed-ups and zooms, series intros and outros, stitching with optional sound, `measure`, both formats.
 2. **Phase 2:** `docdocs init`, the config-driven `web` adapter, the host allow list in config, a Markdown publisher.
 3. **Phase 3:** the feature registry and the author, reviewer and mechanic agents that write guide chapters.
 4. **Phase 4:** a Docker image, nightly CI, a WordPress publisher, and change tracking from release diffs.

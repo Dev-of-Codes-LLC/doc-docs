@@ -4,7 +4,8 @@
      "files": ["src/components/ProductSkeleton.tsx"], "title": "Fix 1: size the skeleton",
      "beats": [{"say": "...", "do": [{"file": 2}]}]}
 
-Actions: file (scroll to the nth file, 1-based), scroll (pixels), wait (ms).
+Actions: file (scroll to the nth file, 1-based), scroll (pixels), and the common
+wait, zoom, unzoom and label.
 """
 
 import asyncio
@@ -83,8 +84,9 @@ async def record(ctx: SceneContext) -> Take:
         f"<h1 class='diff-title'>{html.escape(raw.get('title', ''))}</h1>"
         f"{render(diff)}</div>"
     )
+    await ctx.prepare(labelBackdrop=True)
     await ctx.show_html(ctx.brand.page(body, title=raw.get("title", ""), head=f"<style>{CSS}</style>"))
-    await ctx.capture.start()
+    await ctx.begin()
 
     async def act(action: dict) -> None:
         (name, value), *rest = action.items()
@@ -98,10 +100,8 @@ async def record(ctx: SceneContext) -> Take:
         elif name == "scroll":
             await ctx.page.evaluate("y => document.getElementById('diff').scrollBy({top: y, behavior: 'smooth'})", value)
             await asyncio.sleep(0.9)
-        elif name == "wait":
-            await asyncio.sleep(float(value) / 1000)
         else:
             raise ValueError(f"{ctx.scene.label}: unknown code action {name!r}")
 
     await ctx.play(act)
-    return ctx.take(await ctx.capture.stop())
+    return await ctx.end()

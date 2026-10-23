@@ -9,6 +9,7 @@ storyboard, so the card shows what was measured.
 """
 
 import html
+import re
 
 from docdocs.recorder import SceneContext, Take, fill
 
@@ -31,15 +32,25 @@ async def record(ctx: SceneContext) -> Take:
             f"<p class='{'link' if line.startswith(('http', 'github.com', 'devofcodes.com')) else ''}'>{html.escape(line)}</p>"
             for line in lines
         )
+    if name == "hook":
+        # "How does it *know*?" builds word by word; *word* is the amber accent.
+        spans = []
+        for i, word in enumerate(fields.pop("text", "").split()):
+            text = html.escape(word)
+            if "*" in word:
+                text = re.sub(r"\*(.+?)\*", r"<em>\1</em>", text)
+            spans.append(f"<span class='w in' style='--d: {150 + i * 160}ms'>{text}</span>")
+        fields["words_html"] = " ".join(spans)
     body = fill(ctx.brand.template(name), fields)
+    await ctx.prepare()
     await ctx.show_html(ctx.brand.page(body, title=ctx.storyboard.title))
-    await ctx.capture.start()
+    await ctx.begin()
 
     async def no_actions(action: dict) -> None:
-        raise ValueError(f"{ctx.scene.label}: card scenes take no actions, got {action}")
+        raise ValueError(f"{ctx.scene.label}: card scenes take only wait, zoom and label, got {action}")
 
     await ctx.play(no_actions)
-    return ctx.take(await ctx.capture.stop())
+    return await ctx.end()
 
 
 def metric_fields(ctx: SceneContext, raw: dict) -> dict:
