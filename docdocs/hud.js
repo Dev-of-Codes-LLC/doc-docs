@@ -106,16 +106,20 @@
     return esc(text).replace(/\*(.+?)\*/g, '<em>$1</em>').replace(/_(.+?)_/g, '<em class="cyan">$1</em>');
   }
 
+  // While a label shows, --dd-label-bottom on <html> holds its bottom edge in px,
+  // so a scene can keep its content clear of it (the terminal does).
   function setLabel(text) {
     state.label = text;
     if (!build()) return;
-    if (!text) { labelEl.classList.remove('on'); return; }
+    const root = document.documentElement.style;
+    if (!text) { labelEl.classList.remove('on'); root.removeProperty('--dd-label-bottom'); return; }
     if (labelEl.dataset.text === text && labelEl.classList.contains('on')) return;
     labelEl.classList.remove('on');
     labelEl.dataset.text = text;
     labelEl.innerHTML = markup(text);
     void labelEl.offsetWidth;
     labelEl.classList.add('on');
+    root.setProperty('--dd-label-bottom', `${labelEl.offsetTop + labelEl.offsetHeight}px`);
   }
 
   // chunks: [{words: [...], times: [[start, end] ms from t0, ...]}]

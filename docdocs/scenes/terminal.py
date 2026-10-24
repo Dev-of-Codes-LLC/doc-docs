@@ -23,14 +23,17 @@ from pathlib import Path
 from docdocs.recorder import SceneContext, Take
 
 CSS = """
-.term { position: absolute; inset: calc(var(--u) * 4); background: #0B0E14; border: 1px solid #1f2633; border-radius: 14px;
-  box-shadow: 0 20px 60px rgb(0 0 0 / .5); display: flex; flex-direction: column; overflow: hidden; }
-.bar { display: flex; align-items: center; gap: calc(var(--u) * 1.2); padding: calc(var(--u) * 1.5) calc(var(--u) * 2);
-  background: var(--bg-elevated); border-bottom: 1px solid #1f2633; font-family: var(--mono); font-size: calc(var(--u) * 2);
+.term { --bar: calc(var(--u) * 5.4); position: absolute; inset: calc(var(--u) * 4); background: #0B0E14; border: 1px solid #1f2633;
+  border-radius: 14px; box-shadow: 0 20px 60px rgb(0 0 0 / .5); display: flex; flex-direction: column; overflow: hidden; }
+.bar { display: flex; align-items: center; gap: calc(var(--u) * 1.2); height: var(--bar); box-sizing: border-box; padding: 0 calc(var(--u) * 2);
+  flex: none; background: var(--bg-elevated); border-bottom: 1px solid #1f2633; font-family: var(--mono); font-size: calc(var(--u) * 2);
   color: var(--text-muted); }
 .dot { width: calc(var(--u) * 1.4); height: calc(var(--u) * 1.4); border-radius: 50%; background: #2a3140; }
 .scroll { flex: 1; overflow: hidden; padding: calc(var(--u) * 2.4) calc(var(--u) * 3) 30vh; font-family: var(--mono);
-  font-size: calc(var(--u) * 2.3); line-height: 1.55; }
+  font-size: calc(var(--u) * 2.3); line-height: 1.55;
+  /* While a HUD label shows, start the scroll area below it, so no line runs under the label. */
+  margin-top: max(0px, calc(var(--dd-label-bottom, 0px) + var(--u) * 1.2 - var(--u) * 4 - var(--bar)));
+  transition: margin-top 360ms cubic-bezier(.2,.7,.2,1); }
 .item { display: none; margin: 0 0 calc(var(--u) * 1.4); white-space: pre-wrap; word-break: break-word; }
 .item.shown { display: block; animation: enter 300ms ease-out; }
 .prompt { color: var(--text-primary); } .prompt::before { content: '> '; color: var(--cyan); }
@@ -41,6 +44,9 @@ CSS = """
 .final { background: var(--bg-surface); border-left: 3px solid var(--amber); padding: calc(var(--u) * 1.2) calc(var(--u) * 2.4);
   color: var(--text-primary); font-family: var(--body); font-size: calc(var(--u) * 2.8); line-height: 1.5; margin: 0; }
 .final + .final { margin-top: 0; }
+.text b, .final b { font-weight: 600; }
+.text code, .final code { font-family: var(--mono); font-size: .86em; color: var(--cyan); background: rgb(255 255 255 / .06);
+  padding: 0 .2em; border-radius: 4px; }
 .final .h { display: block; font-family: var(--mono); font-weight: 700; color: var(--amber); letter-spacing: .1em; font-size: calc(var(--u) * 2.3); }
 """
 
@@ -80,7 +86,7 @@ def parse(path: Path, redact: list[list[str]]) -> tuple[list[tuple[str, str]], s
         if kind == "assistant":
             for c in e["message"].get("content", []):
                 if c.get("type") == "text" and c.get("text", "").strip():
-                    items.append(("text", html.escape(clean(c["text"].strip()))))
+                    items.append(("text", _inline(clean(c["text"].strip()))))
                 elif c.get("type") == "tool_use":
                     items.append(("tool", f"● <b>{html.escape(c['name'])}</b>({html.escape(clean(_summary(c['name'], c.get('input', {}))))})"))
         elif kind == "user":
@@ -100,6 +106,13 @@ def parse(path: Path, redact: list[list[str]]) -> tuple[list[tuple[str, str]], s
     return items, folder
 
 
+def _inline(text: str) -> str:
+    """Escape text, then show Markdown `code` and **bold** as such instead of as raw marks."""
+    out = html.escape(text)
+    out = re.sub(r"`([^`\n]+)`", r"<code>\1</code>", out)
+    return re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", out)
+
+
 def _final_block(block: str) -> str:
     lines = block.strip().splitlines()
     out = []
@@ -108,7 +121,7 @@ def _final_block(block: str) -> str:
         if bare and bare.upper() == bare and re.search(r"[A-Z]{3}", bare) and len(bare) < 60:
             out.append(f"<span class='h'>{html.escape(bare)}</span>")
         else:
-            out.append(html.escape(re.sub(r"\*\*(.+?)\*\*", r"\1", line)))
+            out.append(_inline(line))
     return "\n".join(out)
 
 
