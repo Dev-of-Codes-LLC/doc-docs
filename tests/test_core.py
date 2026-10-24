@@ -8,7 +8,7 @@ from pathlib import Path
 from docdocs.hosts import HostNotAllowed, check_url
 from docdocs.mux import _srt_time
 from docdocs.scenes.code import render
-from docdocs.scenes.terminal import parse
+from docdocs.scenes.terminal import _final_block, _inline, parse
 from docdocs.storyboard import StoryboardError, load
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -84,6 +84,22 @@ class Terminal(unittest.TestCase):
     def test_extra_redactions(self):
         items, _ = parse(FIXTURES / "sample-run.jsonl", [["Acme Supply", "the shop"]])
         self.assertNotIn("Acme Supply", " ".join(h for _, h in items))
+
+    def test_inline_code_and_bold(self):
+        self.assertEqual(
+            _inline("Code at `a89f997`: `<App>` is **wrong** & `x`"),
+            "Code at <code>a89f997</code>: <code>&lt;App&gt;</code> is <b>wrong</b> &amp; <code>x</code>",
+        )
+        self.assertEqual(_inline("a lone ` stays"), "a lone ` stays")
+        self.assertIn("<code>uat/feedback.md</code>", _final_block("- UAT notes: `uat/feedback.md`"))
+
+    def test_text_items_render_inline_code(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            take = Path(tmp) / "take.jsonl"
+            event = {"type": "assistant", "message": {"content": [{"type": "text", "text": "Reading `api.ts` now."}]}}
+            take.write_text(json.dumps(event) + "\n", encoding="utf-8")
+            items, _ = parse(take, [])
+        self.assertEqual(items, [("text", "Reading <code>api.ts</code> now.")])
 
 
 class Code(unittest.TestCase):
