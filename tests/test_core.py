@@ -63,6 +63,24 @@ class Storyboards(unittest.TestCase):
         sb = load(self.write({"id": "x", "title": "X", "scenes": [{"type": "card", "hold": 1500}]}))
         self.assertEqual(sb.scenes[0].beats[0].hold_ms, 1500)
 
+    def test_finishing_settings(self):
+        sb = load(self.write({"id": "x", "title": "X", "captionStyle": "plain", "stage": "plain", "crf": 20, "fade": 200,
+                              "audio": {"loudness": -16},
+                              "scenes": [{"type": "card", "beats": [{"say": "dev of codes dot com", "text": "devofcodes.com",
+                                                                     "captions": False}]}]}))
+        self.assertEqual((sb.caption_style, sb.stage, sb.crf, sb.audio, sb.fade_ms), ("plain", "plain", 20, {"loudness": -16}, 200))
+        self.assertEqual((sb.scenes[0].beats[0].text, sb.scenes[0].beats[0].captions), ("devofcodes.com", False))
+        defaults = load(self.write({"id": "x", "title": "X", "scenes": [{"type": "card"}]}))
+        self.assertEqual((defaults.caption_style, defaults.stage, defaults.crf, defaults.audio, defaults.srt),
+                         ("words", "glow", 18, None, "sentences"))
+
+    def test_bad_finishing_settings(self):
+        with self.assertRaises(StoryboardError) as e:
+            load(self.write({"id": "x", "title": "X", "captionStyle": "karaoke", "stage": "neon", "crf": 60, "srt": "words",
+                             "scenes": [{"type": "card"}]}))
+        for part in ("captionStyle", "stage must be", "crf must be", "srt must be"):
+            self.assertIn(part, str(e.exception))
+
 
 class Terminal(unittest.TestCase):
     def test_parse_hides_the_working_folder(self):
@@ -122,6 +140,44 @@ class Captions(unittest.TestCase):
         self.assertEqual(_srt_time(3725.4567), "01:02:05,457")
 
 
+class Cards(unittest.TestCase):
+    def test_every_template_fills_every_field(self):
+        from docdocs.recorder import Brand, fill
+        from docdocs.scenes.card import base_fields
+
+        brand = Brand()
+        for path in sorted((brand.dir / "templates").glob("*.html")):
+            fields = base_fields(brand.meta)
+            # Fields only some templates take, filled the way card.py fills them.
+            fields.update({"lines_html": "", "words_html": "", "label": "", "before_value": "", "after_value": "",
+                           "before_label": "", "after_label": "", "note": "", "next": ""})
+            out = fill(brand.template(path.stem), fields)
+            self.assertNotIn("${", out, path.name)
+
+
+class Explain(unittest.TestCase):
+    def test_chip_and_plain_stage(self):
+        from docdocs.scenes.explain import render as render_explain
+
+        out = render_explain([{"id": "c", "kind": "chip", "text": "In <daily> use", "tone": "violet", "at": [50, 60]},
+                              {"id": "n", "kind": "text", "font": "strong", "text": "Name", "at": [50, 40]}], "16:9", plain=True)
+        self.assertIn("class='stage ex plain'", out)
+        self.assertIn("class='el chip'", out)
+        self.assertIn("--tone:#A78BFA", out)
+        self.assertIn("In &lt;daily&gt; use", out)  # escaped
+        self.assertIn("class='el text strong'", out)
+
+
+class Audio(unittest.TestCase):
+    def test_loudnorm_stats_read_the_last_block(self):
+        from docdocs.mux import _loudnorm_stats
+
+        stderr = 'Input #0, wav\n[Parsed_loudnorm_0 @ 0x1] \n{\n\t"input_i" : "-23.10",\n\t"input_tp" : "-4.20"\n}\n'
+        self.assertEqual(_loudnorm_stats(stderr), {"input_i": "-23.10", "input_tp": "-4.20"})
+        with self.assertRaises(RuntimeError):
+            _loudnorm_stats("no json here")
+
+
 if __name__ == "__main__":
     unittest.main()
 
@@ -149,6 +205,26 @@ class Timing(unittest.TestCase):
         self.assertTrue(all(a < b for a, b in times))
         self.assertTrue(all(len(c["words"]) <= 6 for c in chunks))
         self.assertEqual(chunks[0]["words"][-1], "small,")  # breaks after punctuation
+
+    def test_phrases_snap_to_the_pauses(self):
+        import wave as _wave
+        from docdocs.captions import word_spans
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "list.wav"
+            rate = 22050
+            tone = (b"\x00\x40" + b"\x00\xc0") * (rate // 2)  # 1.0 s of sound
+            quiet = lambda s: b"\x00\x00" * int(rate * s)  # noqa: E731
+            with _wave.open(str(path), "wb") as wf:
+                wf.setnchannels(1)
+                wf.setsampwidth(2)
+                wf.setframerate(rate)
+                # "red apples," 0.1-1.1 s, pause, "green," 1.4-2.4 s, pause, "blue." 2.9-3.9 s
+                wf.writeframes(quiet(0.1) + tone + quiet(0.3) + tone + quiet(0.5) + tone + quiet(0.1))
+            spans = word_spans("red apples, green, blue.".split(), path)
+        self.assertAlmostEqual(spans[2][0], 1.4, delta=0.03)  # "green," starts after the first pause
+        self.assertAlmostEqual(spans[3][0], 2.9, delta=0.03)  # "blue." after the second
+        self.assertLess(spans[1][1], 1.15)
 
     def test_speed_maps_take_time_to_video_time(self):
         from docdocs.mux import _out_time, _rate
