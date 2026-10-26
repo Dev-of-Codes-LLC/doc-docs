@@ -117,6 +117,13 @@ html, body {
   to { opacity: 1; transform: none; }
 }
 
+/* A card whose scene shows its elements on cue: they wait for the "on" class. */
+.wait .in {
+  animation: none;
+  transition: opacity 500ms ease-out, transform 600ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+.wait .in.on { opacity: 1; transform: none; }
+
 /* Metric card */
 .metric {
   display: flex;
@@ -217,3 +224,66 @@ html, body {
 
 /* Outro */
 .outro .next { font-family: var(--mono); font-size: calc(var(--u) * 2.8); color: var(--amber); margin: calc(var(--u) * 4) 0 0; }
+
+/* stage "plain": the background alone, no glow or grid. */
+.stage.plain { background: var(--bg-base); }
+.stage.plain::after { display: none; }
+
+/* Poster, headline and end card share one layout, so the wordmark sits in the
+   same place on each and a video that loops from end card to poster only
+   swaps the line under it. Every size here is at least 4% of the frame height. */
+.poster { display: block; padding: 0; }
+.poster .at { position: absolute; left: 0; right: 0; display: flex; justify-content: center; transform: translateY(-50%); }
+.poster .wm-at { top: 32%; }
+.poster .head-at { top: 54%; }
+.poster .url-at { top: 70%; }
+.poster .wm { margin: 0; font-family: var(--display); font-weight: 700; font-size: calc(var(--u) * 6.4); letter-spacing: 0.01em; }
+.poster .headline {
+  margin: 0;
+  max-width: 90%;
+  text-align: center;
+  font-family: var(--body);
+  font-weight: 600;
+  font-size: calc(var(--u) * 10);
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+}
+.endcard .cta {
+  margin: 0;
+  padding: calc(var(--u) * 1.7) calc(var(--u) * 4.4);
+  border-radius: 999px;
+  background: var(--amber);
+  color: var(--bg-base);
+  font-family: var(--body);
+  font-weight: 600;
+  font-size: calc(var(--u) * 5.6);
+  line-height: 1.1;
+}
+.endcard .url { margin: 0; font-family: var(--mono); font-size: calc(var(--u) * 4.6); color: var(--cyan); letter-spacing: 0.02em; }
+
+/* Still and slot: a 16:9 frame in the upper part of the screen, clear of the captions. */
+.still, .slot { display: block; padding: 0; }
+.shot {
+  position: absolute;
+  left: 50%;
+  top: 5%;
+  height: 80%;
+  aspect-ratio: 16 / 9;
+  transform: translateX(-50%);
+  overflow: hidden;
+  border-radius: calc(var(--u) * 1.4);
+  border: 3px solid var(--tone);
+  box-shadow: 0 0 calc(var(--u) * 4) color-mix(in srgb, var(--tone) 22%, transparent);
+  background: var(--bg-surface);
+}
+.shot img { display: block; width: 100%; animation: pan 12s cubic-bezier(0.45, 0, 0.55, 1) forwards; }
+@keyframes pan { to { transform: translateY(var(--pan)); } }
+.slot .shot { display: flex; align-items: center; justify-content: center; border-style: dashed; box-shadow: none; }
+/* Screen: a still under a heading and subheading. A zoom into the shot pushes the
+   heading out of the frame; a zoom to the shot's own box keeps it out. */
+.screen { display: block; padding: 0; }
+.screen .screen-head { position: absolute; left: 0; right: 0; top: 4.5%; text-align: center; }
+.screen .screen-title { margin: 0; font-family: var(--body); font-weight: 600; font-size: calc(var(--u) * 6.2); line-height: 1.1; letter-spacing: -0.02em; }
+.screen .screen-sub { margin: calc(var(--u) * 1.2) 0 0; font-family: var(--body); font-size: calc(var(--u) * 4); color: var(--text-secondary); }
+.screen .shot { top: 26%; height: 64%; }
+.slot .tag { margin: 0; font-family: var(--mono); font-size: calc(var(--u) * 4.4); letter-spacing: 0.14em; text-transform: uppercase; color: var(--tone); }

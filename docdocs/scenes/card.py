@@ -6,12 +6,37 @@
 Templates come from the brand folder. The metric template takes its numbers
 from measurements.json (written by `docdocs measure`), never from the
 storyboard, so the card shows what was measured.
+
+Templates for a pitch or a trailer:
+
+- poster    the wordmark over a headline, drawn complete on its first frame
+- headline  the poster's headline alone, entering
+- endcard   the wordmark in the poster's place, an amber call to action and
+            a link (fields cta and url)
+- still     a screenshot in a frame of its tone, panning slowly: "image" is
+            a path from the storyboard's folder; fields tone and pan (how far
+            it travels, e.g. "-40%")
+- screen    the same screenshot under a heading (title) and a subheading
+            (subtitle). Zoom into the shot and the heading leaves the frame;
+            zoom to a box around the shot to end on the shot alone
+- slot      a dashed frame that holds the place of footage still to come,
+            with a short tag
+
+A tone is a name from the explain scene's tones (green, violet, cyan, grey...)
+or a CSS colour.
+
+Cards take one action of their own, "show": a CSS selector. Once a scene
+shows anything, the template's entering elements (class "in") wait for it
+instead of entering on their own, so {"show": ".cta", "at": "Discuss"} puts
+the call to action on screen as the voice says it.
 """
 
 import html
 import re
+import shutil
 
 from docdocs.recorder import SceneContext, Take, fill
+from docdocs.scenes.explain import TONES
 
 METRICS = {
     "cls": {"label": "Cumulative Layout Shift", "digits": 3, "unit": ""},
@@ -19,11 +44,27 @@ METRICS = {
 }
 
 
+def base_fields(meta: dict) -> dict:
+    """Every template field, empty or from the brand, so no ${field} is ever left in a page."""
+    return {"kicker": "", "title": "", "subtitle": "", "body": "", "mark": meta.get("mark", ""),
+            "wordmark": meta.get("name", ""), "url": meta.get("mark", ""), "cta": "",
+            "tag": "", "tone": "grey", "image": "", "pan": "0%"}
+
+
 async def record(ctx: SceneContext) -> Take:
     raw = ctx.scene.raw
     name = raw.get("template", "title")
-    fields = {"kicker": "", "title": "", "subtitle": "", "body": "", "mark": ctx.brand.meta.get("mark", "")}
+    fields = base_fields(ctx.brand.meta)
     fields.update(raw.get("fields", {}))
+    fields["tone"] = TONES.get(fields["tone"], fields["tone"])
+    if raw.get("image"):
+        # Copied next to the page, so the scene only opens files under its own folder.
+        src = ctx.storyboard.resolve(raw["image"])
+        if not src.exists():
+            raise FileNotFoundError(f"{ctx.scene.label}: image {src} not found")
+        copy = ctx.dir / f"image{src.suffix}"
+        shutil.copyfile(src, copy)
+        fields["image"] = copy.as_uri()
     if name == "metric":
         fields.update(metric_fields(ctx, raw))
     if name == "credit":
@@ -42,14 +83,21 @@ async def record(ctx: SceneContext) -> Take:
             spans.append(f"<span class='w in' style='--d: {150 + i * 160}ms'>{text}</span>")
         fields["words_html"] = " ".join(spans)
     body = fill(ctx.brand.template(name), fields)
+    if raw.get("stage", ctx.storyboard.stage) == "plain":
+        body = body.replace('class="stage', 'class="stage plain', 1)
+    if any("show" in action for beat in ctx.scene.beats for action in beat.actions):
+        body = body.replace('class="stage', 'class="stage wait', 1)
     await ctx.prepare()
     await ctx.show_html(ctx.brand.page(body, title=ctx.storyboard.title))
     await ctx.begin()
 
-    async def no_actions(action: dict) -> None:
-        raise ValueError(f"{ctx.scene.label}: card scenes take only wait, zoom and label, got {action}")
+    async def act(action: dict) -> None:
+        (name, value), *_ = action.items()
+        if name != "show":
+            raise ValueError(f"{ctx.scene.label}: card scenes take only show, wait, zoom and label, got {action}")
+        await ctx.page.evaluate("s => document.querySelectorAll(s).forEach(e => e.classList.add('on'))", value)
 
-    await ctx.play(no_actions)
+    await ctx.play(act)
     return await ctx.end()
 
 

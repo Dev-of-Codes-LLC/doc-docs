@@ -5,9 +5,15 @@ the video, the stitch picks the frame that was on screen at that moment and
 pipes it to ffmpeg, which encodes once to H.264 at exactly 30 fps. Scene
 offsets come from the same frame count, and the narration is one WAV with
 every clip placed where its beat started, so picture and voice cannot drift.
+
+With an "audio" setting, the track is finished before the encode: mixed to
+48 kHz stereo with any music and room tone, then normalised in two passes
+(loudnorm measures, then applies one linear gain), so the integrated
+loudness and true peak land where the setting says.
 """
 
 import array
+import json
 import math
 import random
 import shutil
@@ -15,6 +21,7 @@ import subprocess
 import wave
 from pathlib import Path
 
+from docdocs.captions import timings
 from docdocs.recorder import Take, scene_dir
 from docdocs.storyboard import Format, Storyboard
 from docdocs.voice import SAMPLE_RATE
@@ -95,6 +102,78 @@ def _mix(samples: array.array, add: array.array, at: int) -> None:
             samples[j] = max(-32768, min(32767, samples[j] + s))
 
 
+def _loudnorm_stats(stderr: str) -> dict:
+    """The JSON block loudnorm prints at the end of a measuring pass."""
+    start = stderr.rfind("{")
+    end = stderr.rfind("}")
+    if start == -1 or end < start:
+        raise RuntimeError(f"loudnorm printed no measurements:\n{stderr[-800:]}")
+    return json.loads(stderr[start:end + 1])
+
+
+def finish_audio(storyboard: Storyboard, voice: Path, total: float, out: Path, log=print) -> Path:
+    """Mix the voice track to 48 kHz stereo with music and room tone, then normalise it in two passes."""
+    spec = storyboard.audio or {}
+    target, peak = float(spec.get("loudness", -16)), float(spec.get("truePeak", -1))
+    inputs = ["-i", str(voice)]
+    chains, mix = [], []
+    if storyboard.music:
+        music = storyboard.resolve(storyboard.music["file"])
+        if not music.exists():
+            raise FileNotFoundError(f"music file {music} not found")
+        vol = float(storyboard.music.get("volume", 0.18))
+        n = inputs.count("-i")
+        inputs += ["-stream_loop", "-1", "-i", str(music)]
+        chains += [
+            "[0:a]aresample=48000,aformat=channel_layouts=stereo,asplit=2[voice][key]",
+            f"[{n}:a]aresample=48000,aformat=channel_layouts=stereo,volume={vol},"
+            f"afade=t=out:st={max(0.0, total - 1.5):.2f}:d=1.5[bed]",
+            "[bed][key]sidechaincompress=threshold=0.03:ratio=6:attack=30:release=500[ducked]",
+        ]
+        mix += ["[voice]", "[ducked]"]
+    else:
+        chains.append("[0:a]aresample=48000,aformat=channel_layouts=stereo[voice]")
+        mix.append("[voice]")
+    room = spec.get("roomTone")
+    if room:
+        gain = float(room.get("gain", -58))
+        n = inputs.count("-i")
+        if room.get("file"):
+            source = storyboard.resolve(room["file"])
+            if not source.exists():
+                raise FileNotFoundError(f"room tone file {source} not found")
+            inputs += ["-stream_loop", "-1", "-i", str(source)]
+            chains.append(f"[{n}:a]aresample=48000,aformat=channel_layouts=stereo,volume={gain}dB[room]")
+        else:
+            # Synthesized: brown noise, low-passed, far under the voice. A recorded room is better when there is one.
+            inputs += ["-f", "lavfi", "-i", "anoisesrc=color=brown:sample_rate=48000:amplitude=0.5:seed=7"]
+            chains.append(f"[{n}:a]aformat=channel_layouts=stereo,lowpass=f=1000,volume={gain}dB[room]")
+        mix.append("[room]")
+    if len(mix) > 1:
+        chains.append(f"{''.join(mix)}amix=inputs={len(mix)}:normalize=0:duration=first[mix]")
+    else:
+        chains.append("[voice]anull[mix]")
+    graph = ";".join(chains)
+    norm = f"loudnorm=I={target}:TP={peak}:LRA=11"
+
+    cmd = [ffmpeg_exe(), "-hide_banner", "-nostats", *inputs, "-filter_complex",
+           f"{graph};[mix]{norm}:print_format=json[out]", "-map", "[out]", "-t", f"{total:.3f}", "-f", "null", "-"]
+    measured = _loudnorm_stats(subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace").stderr)
+    log(f"audio: measured {measured['input_i']} LUFS, true peak {measured['input_tp']} dBTP")
+    apply = (f"{norm}:measured_I={measured['input_i']}:measured_TP={measured['input_tp']}"
+             f":measured_LRA={measured['input_lra']}:measured_thresh={measured['input_thresh']}"
+             f":offset={measured['target_offset']}:linear=true:print_format=json")
+    cmd = [ffmpeg_exe(), "-y", "-hide_banner", "-nostats", *inputs, "-filter_complex",
+           f"{graph};[mix]{apply},aresample=48000[out]", "-map", "[out]", "-t", f"{total:.3f}",
+           "-c:a", "pcm_s16le", "-ar", "48000", "-ac", "2", str(out)]
+    result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    if result.returncode != 0 or not out.exists():
+        raise RuntimeError(f"ffmpeg could not finish the audio:\n{result.stderr[-800:]}")
+    done = _loudnorm_stats(result.stderr)
+    log(f"audio: {done['output_i']} LUFS, true peak {done['output_tp']} dBTP ({done['normalization_type']})")
+    return out
+
+
 def stitch(storyboard: Storyboard, fmt: Format, log=print) -> tuple[Path, Path]:
     takes = []
     for scene in storyboard.scenes:
@@ -144,7 +223,13 @@ def stitch(storyboard: Storyboard, fmt: Format, log=print) -> tuple[Path, Path]:
             at = round(begin * rate)
             room = max(0, len(samples) - at)
             samples[at:at + min(len(clip), room)] = clip[:room]
-            cues.append((begin, begin + mark.seconds, mark.text))
+            if storyboard.srt == "lines":
+                # The voice plays at normal speed even in a sped-up beat, so clip time is video time.
+                for chunk in timings(mark.text, Path(mark.clip)):
+                    a, b = chunk["times"][0][0], chunk["times"][-1][1]
+                    cues.append((begin + a / 1000, begin + b / 1000, " ".join(chunk["words"])))
+            else:
+                cues.append((begin, begin + mark.seconds, mark.text))
     if storyboard.sfx:
         sweep = _whoosh(rate)
         for cut in scene_starts[1:]:
@@ -164,7 +249,10 @@ def stitch(storyboard: Storyboard, fmt: Format, log=print) -> tuple[Path, Path]:
     w, h = fmt.width, fmt.height
     audio_in = ["-i", str(audio_path)]
     audio_map: list[str] = []
-    if storyboard.music:
+    if storyboard.audio:
+        final = finish_audio(storyboard, audio_path, total, out_dir / f"{stem}-final.wav", log)
+        audio_in = ["-i", str(final)]
+    elif storyboard.music:
         music = storyboard.resolve(storyboard.music["file"])
         if not music.exists():
             raise FileNotFoundError(f"music file {music} not found")
@@ -184,9 +272,9 @@ def stitch(storyboard: Storyboard, fmt: Format, log=print) -> tuple[Path, Path]:
         "-f", "image2pipe", "-framerate", str(FPS), "-c:v", "png", "-i", "-",
         *audio_in,
         *audio_map,
-        "-vf", f"scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=0x080A0F,format=yuv420p",
+        "-vf", f"scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=0x080A0F,setsar=1,format=yuv420p",
         "-r", str(FPS),
-        "-c:v", "libx264", "-preset", "medium", "-crf", "18",
+        "-c:v", "libx264", "-preset", "medium", "-profile:v", "high", "-crf", str(storyboard.crf),
         "-c:a", "aac", "-b:a", "160k",
         "-t", f"{total:.3f}", "-movflags", "+faststart",
         str(mp4_path),

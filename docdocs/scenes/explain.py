@@ -15,8 +15,13 @@ up and count them, so the picture builds and changes without cutting.
        {"say": "...", "label": "the page *moves*", "do": [{"show": ["frame", "img"]}, {"set": {"id": "img", "at": [34, 24, 32, 20]}}, {"count": {"id": "cls", "to": 0.25}}]}
      ]}
 
-Kinds: text, box, dot, dots (a scattered field), axes, line (from/to an id or
-a point), pill (parts that light up), counter, check.
+Kinds: text ("font": "mono", "display" or "strong"), box, dot, dots (a
+scattered field), axes, line (from/to an id or a point), pill (parts that
+light up), chip (a status: a dot and a short uppercase word in its tone),
+counter, check. Tones: cyan, amber, rose, green, violet, grey, muted, white,
+dim, or any CSS colour.
+
+"stage": "plain" (on the scene or the storyboard) drops the glow and grid.
 Actions: show, hide, set (add "together": true to start the next action at
 the same moment), light, count, pulse, and the common wait, zoom, unzoom and
 label.
@@ -29,8 +34,8 @@ import re
 
 from docdocs.recorder import SceneContext, Take
 
-TONES = {"cyan": "#00C8FF", "amber": "#F59E0B", "rose": "#F43F5E", "green": "#10B981",
-         "muted": "#5C6573", "white": "#E8EAF0", "dim": "#2A3140"}
+TONES = {"cyan": "#00C8FF", "amber": "#F59E0B", "rose": "#F43F5E", "green": "#10B981", "violet": "#A78BFA",
+         "grey": "#8B93A1", "muted": "#5C6573", "white": "#E8EAF0", "dim": "#2A3140"}
 
 CSS = """
 .ex { position: absolute; inset: 0; overflow: hidden; }
@@ -44,6 +49,7 @@ CSS = """
 .text.left { transform: translate(0, -50%); text-align: left; }
 .text.mono { font-family: var(--mono); letter-spacing: .04em; }
 .text.display { font-family: var(--display); font-weight: 800; }
+.text.strong { font-weight: 600; letter-spacing: -0.02em; }
 .text em { font-style: normal; color: var(--amber); } .text em.cyan { color: var(--cyan); }
 .box { border-radius: calc(var(--u) * 1.2); box-sizing: border-box; }
 .box .tag { position: absolute; left: 0; top: calc(var(--u) * -3.2); font-family: var(--mono); font-size: calc(var(--u) * 1.9);
@@ -59,6 +65,11 @@ CSS = """
   background: #111722; border: 1px solid #263044; border-radius: calc(var(--u) * 1.2); font-family: var(--mono);
   font-size: calc(var(--u) * 2.6); color: var(--text-muted); }
 .pill .part { transition: color 250ms; } .pill .part.lit { color: var(--cyan); } .pill .sep { color: #33405a; }
+.chip { transform: translate(-50%, -50%); display: flex; align-items: center; gap: .6em; padding: .55em 1.2em;
+  border-radius: 999px; border: 2px solid color-mix(in srgb, var(--tone) 60%, transparent);
+  background: color-mix(in srgb, var(--tone) 12%, #0E1117); font-family: var(--mono); font-weight: 700;
+  letter-spacing: .08em; text-transform: uppercase; color: var(--tone); white-space: nowrap; line-height: 1; }
+.chip i { width: .62em; height: .62em; border-radius: 50%; background: var(--tone); }
 .counter { transform: translate(-50%, -50%); text-align: center; }
 .counter .v { font-family: var(--mono); font-weight: 700; font-size: calc(var(--u) * 8); color: var(--tone); line-height: 1; }
 .counter .k { font-family: var(--mono); font-size: calc(var(--u) * 2.2); letter-spacing: .14em; color: var(--text-secondary); margin-top: calc(var(--u) * 1.2); }
@@ -151,7 +162,7 @@ def _style(at, tone: str, extra: str = "") -> str:
     return f"{pos}--tone:{TONES.get(tone, tone)};{extra}"
 
 
-def render(elements: list[dict], fmt_name: str) -> str:
+def render(elements: list[dict], fmt_name: str, plain: bool = False) -> str:
     out, svg = [], []
     for el in elements:
         kind, eid = el.get("kind"), el.get("id", "")
@@ -173,7 +184,7 @@ def render(elements: list[dict], fmt_name: str) -> str:
             style = el.get("style", "dashed")
             color = TONES.get(tone, tone)
             if style == "fill":
-                look = f"background:{color};opacity:1;"
+                look = f"background:{color};"
             elif style == "solid":
                 look = f"border:2px solid {color};background:color-mix(in srgb, {color} 8%, transparent);"
             else:
@@ -196,6 +207,10 @@ def render(elements: list[dict], fmt_name: str) -> str:
         elif kind == "pill":
             parts = "<span class='sep'>|</span>".join(f"<span class='part'>{html.escape(p)}</span>" for p in el.get("parts", []))
             out.append(f"<div data-id='{eid}' class='el pill{on}' style='{_style(at, tone)}'>{parts}</div>")
+        elif kind == "chip":
+            size = el.get("size", 4.4)
+            out.append(f"<div data-id='{eid}' class='el chip{on}' style='{_style(at, tone)}font-size:calc(var(--u)*{size})'>"
+                       f"<i></i>{html.escape(el.get('text', ''))}</div>")
         elif kind == "counter":
             digits = int(el.get("digits", 0))
             value = f"{float(el.get('value', 0)):.{digits}f}"
@@ -211,12 +226,13 @@ def render(elements: list[dict], fmt_name: str) -> str:
             )
         else:
             raise ValueError(f"unknown explain element kind {kind!r}")
-    return f"<div class='stage ex'><svg class='lines'>{''.join(svg)}</svg>{''.join(out)}</div>"
+    return f"<div class='stage ex{' plain' if plain else ''}'><svg class='lines'>{''.join(svg)}</svg>{''.join(out)}</div>"
 
 
 async def record(ctx: SceneContext) -> Take:
     raw = ctx.scene.raw
-    body = render(raw.get("elements", []), ctx.fmt.name) + f"<script>{RUNTIME}</script>"
+    plain = raw.get("stage", ctx.storyboard.stage) == "plain"
+    body = render(raw.get("elements", []), ctx.fmt.name, plain) + f"<script>{RUNTIME}</script>"
     await ctx.prepare()
     await ctx.show_html(ctx.brand.page(body, title="explain", head=f"<style>{CSS}</style>"))
     await ctx.begin()

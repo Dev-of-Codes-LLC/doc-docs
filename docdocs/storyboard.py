@@ -14,6 +14,25 @@ Optional top-level settings:
 - sfx         true adds a soft whoosh at each scene change
 - music       {"file": "music/bed.mp3", "volume": 0.18}: a bed that dips
               under the voice. Use only music you have the rights to.
+- captionStyle "words" (the default) lights each word as it is said; "plain"
+              shows each line in Literata with no highlight
+- stage       "plain" drops the glow and grid behind cards and explain scenes
+- fade        the fade through navy at each scene edge, in ms (default 320).
+              Shorter fades keep the narration flowing across cuts.
+- crf         the H.264 quality, 0-51 (default 18; lower is better)
+- srt         "sentences" (the default) makes one cue per sentence; "lines"
+              makes one cue per caption line, the same lines burned in
+- audio       {"loudness": -16, "truePeak": -1, "roomTone": {"gain": -58}}:
+              mix to 48 kHz stereo and normalise the loudness in two passes.
+              roomTone lays a quiet bed under the voice: synthesized brown
+              noise, or {"file": "room.wav", "gain": 0} for a recorded one.
+
+A scene can set "fadeIn": false or "fadeOut": false to start or end on the
+scene itself instead of the fade through navy: the first frame of a video,
+or a last frame that holds. A beat's "text" is what captions and the SRT
+show when it differs from what is said ("say": "dev of codes dot com",
+"text": "devofcodes.com"). A beat's "captions": false hides the burned-in
+caption for that beat alone, while the screen already shows its words.
 """
 
 import json
@@ -62,6 +81,8 @@ class Beat:
     label: str | None = None  # a key phrase on screen; *word* is the accent
     speed: float = 1.0  # play this beat faster; the video says so on screen
     pause_ms: int = 0  # extra silence after the sentence, before the next beat
+    text: str | None = None  # what captions and the SRT show, when it differs from what is said
+    captions: bool | None = None  # this beat only: false while a card on screen already says the line
 
 
 @dataclass
@@ -91,6 +112,12 @@ class Storyboard:
     captions: frozenset = frozenset()
     sfx: bool = False
     music: dict | None = None
+    caption_style: str = "words"
+    stage: str = "glow"
+    crf: int = 18
+    audio: dict | None = None
+    srt: str = "sentences"
+    fade_ms: int = 320
 
     @property
     def base_dir(self) -> Path:
@@ -168,11 +195,23 @@ def load(path: str | Path) -> Storyboard:
             if not 0.5 <= speed <= 8:
                 problems.append(f"scene {i}: a beat's speed must be between 0.5 and 8")
             beats.append(Beat(say=b.get("say"), actions=actions, hold_ms=int(b.get("hold", 0)),
-                              label=b.get("label"), speed=speed, pause_ms=int(b.get("pause", 0))))
+                              label=b.get("label"), speed=speed, pause_ms=int(b.get("pause", 0)),
+                              text=b.get("text"), captions=b.get("captions")))
         if not beats:
             # A scene with no beats still shows for a moment.
             beats.append(Beat(say=None, actions=[], hold_ms=int(s.get("hold", 2500))))
         scenes.append(Scene(index=i, type=kind, beats=beats, raw=s))
+
+    if raw.get("captionStyle", "words") not in ("words", "plain"):
+        problems.append("captionStyle must be 'words' or 'plain'")
+    if raw.get("stage", "glow") not in ("glow", "plain"):
+        problems.append("stage must be 'glow' or 'plain'")
+    if raw.get("srt", "sentences") not in ("sentences", "lines"):
+        problems.append("srt must be 'sentences' or 'lines'")
+    if not 0 <= int(raw.get("fade", 320)) <= 2000:
+        problems.append("fade must be between 0 and 2000 ms")
+    if not 0 <= int(raw.get("crf", 18)) <= 51:
+        problems.append("crf must be between 0 and 51")
 
     if problems:
         raise StoryboardError(f"{path}:\n  - " + "\n  - ".join(problems))
@@ -191,4 +230,10 @@ def load(path: str | Path) -> Storyboard:
         captions=frozenset(raw.get("captions", [])),
         sfx=bool(raw.get("sfx", False)),
         music=raw.get("music"),
+        caption_style=raw.get("captionStyle", "words"),
+        stage=raw.get("stage", "glow"),
+        crf=int(raw.get("crf", 18)),
+        audio=raw.get("audio"),
+        srt=raw.get("srt", "sentences"),
+        fade_ms=int(raw.get("fade", 320)),
     )

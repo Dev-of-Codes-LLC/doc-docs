@@ -74,10 +74,16 @@ A beat can also carry:
 
 - `label`: a key phrase on screen while the beat plays, like `"everything below *jumps*"`. `*word*` is the amber accent and `_word_` the cyan one. One phrase per idea carries the meaning even with the sound off.
 - `speed`: play the beat faster, for example `2` while a throttled page loads. The video shows a "2× SPEED" badge for that stretch, and the narration still plays at normal speed.
+- `captions`: `false` hides the burned-in caption for this beat only, while a card on screen already shows its words. The SRT keeps the line.
+- `text`: what the captions and the SRT show, when it differs from what the voice should say. Kokoro reads `devofcodes.com` as "di-VOF-codes", so say `"dev of codes dot com"` and show `"devofcodes.com"`.
+
+A scene can set `"fadeIn": false` or `"fadeOut": false` to skip the fade through navy at that edge. The first scene of a pitch starts on its poster, so the first frame doubles as the poster image; the last one holds its end card to the final frame.
 
 Any action can wait for its moment with `at`: `{"show": "img", "at": "picture"}` fires when the voice reaches "picture" (the first match after the previous anchor in the beat), and `"at": 1200` fires 1.2 s into the beat. Anchor the visual to the word that names it, and the picture lands when it is said.
 
-Every scene type also understands these actions: `wait` (ms), `zoom` (a CSS selector, with `scale` and `ms`) to push in on what is moving, `unzoom`, and `label`.
+Every scene type also understands these actions: `wait` (ms), `zoom` (a CSS selector, or a box `{"left", "top", "width", "height"}` in CSS pixels, with `scale` and `ms`) to push in on what is moving, `unzoom`, and `label`.
+
+Any scene can lay **sheets** over itself: a test run, an audit, a write-up. `{"sheet": {"id": "audit", "kind": "AUDIT", "title": "...", "lines": ["..."], "tone": "violet", "box": [left, top, width]}}` drops a sheet in from the top (`box` is in percent of the frame), or grows it out of an element with `"from": "<selector>"`. Sending the same `id` again updates it, and its new lines fade in, so a sheet can fill in as the voice reads it. `"dim": true` darkens the scene behind the sheets until they ship or clear (a number sets the opacity; `1` hides the scene). `"height"` fixes a sheet's height in percent of the frame, and `"flat": true` drops its shadow. A bundle is tied with ribbons and a bow; shipping it rumbles, smokes and lifts off. `{"sheets": "bundle"}` squares every sheet into one strapped stack, `{"sheets": "ship"}` sends the stack off the right edge, and `{"sheets": "clear"}` fades them out.
 
 ### Storyboard settings
 
@@ -88,16 +94,22 @@ Every scene type also understands these actions: `wait` (ms), `zoom` (a CSS sele
 | `series` | A JSON file with `intro` and `outro` scene lists, added to every episode that names it. `"introAfterFirst": true` puts the intro after the episode's first scene (the hook). `{episode}`, `{title}` and `{next}` in the series file come from the storyboard. |
 | `sfx` | `true` adds a soft, synthesized whoosh at each scene change |
 | `music` | `{"file": "music/bed.mp3", "volume": 0.18}`: a bed that dips under the voice and fades out at the end. Use only music you have the rights to. |
+| `captionStyle` | `"words"` (the default) lights each word as it is said; `"plain"` shows each line in Literata, with no highlight |
+| `stage` | `"plain"` drops the glow and grid behind cards and explain scenes, for a quieter look |
+| `fade` | The fade through navy at each scene edge, in ms (default 320). A shorter fade keeps the narration flowing across cuts. |
+| `crf` | H.264 quality, 0 to 51 (default 18; lower is better). The encode is always High profile, yuv420p, square pixels, 30 fps, with the index at the front of the file. |
+| `srt` | `"sentences"` (the default) writes one SRT cue per sentence; `"lines"` writes one cue per caption line, the same short lines that are burned in |
+| `audio` | `{"loudness": -16, "truePeak": -1, "roomTone": {"gain": -58}}` finishes the track before the encode: 48 kHz stereo, any music mixed in, then two loudnorm passes (measure, then one linear gain). `roomTone` lays a quiet bed under the voice, synthesized brown noise or `{"file": "room.wav", "gain": 0}` for a recorded room. |
 
 ### Scenes
 
 | Type | Shows | Settings | Actions |
 | --- | --- | --- | --- |
-| `card` | A brand card | `template`: `hook` (a question that builds word by word; `fields.text`), `title`, `text`, `metric`, `credit`, `sting` (a two-second series mark) or `outro`; `fields` for its text. `metric` takes `metric` (`cls` or `lcp`) and reads its numbers from `measurements.json`, never from the storyboard. | none |
-| `browser` | The product | `system`; `checkout` (a git ref to build and serve first); `network` (`slow-4g`); `device: "phone"` plays the app at phone width in a phone frame on the brand canvas (landscape formats), with a big live layout-shift counter; `overlay: ["layout-shift"]` outlines every element that moves and shows a running CLS; `holdShifts` keeps the outlines until `clearShifts`; `badge` and `badgeColor` (`before` or `after`). | `goto`, `waitFor`, `scroll`, `click`, `reload`, `clearShifts` |
+| `card` | A brand card | `template`: `hook` (a question that builds word by word; `fields.text`), `title`, `text`, `metric`, `credit`, `sting` (a two-second series mark) or `outro`; `fields` for its text. `metric` takes `metric` (`cls` or `lcp`) and reads its numbers from `measurements.json`, never from the storyboard. For a pitch: `poster` (wordmark over `title`, complete on its first frame), `headline` (the poster's headline alone), `endcard` (the wordmark in the poster's place, an amber `cta` and a `url`; show them on their words with `{"show": ".cta", "at": "Discuss"}`), `still` (`image`, a screenshot path, in a frame of `fields.tone` that pans by `fields.pan`, e.g. `"-40%"`), `screen` (the same under a `title` and `subtitle`; zoom into the shot and the heading leaves the frame) and `slot` (a dashed frame holding the place of footage to come, with a `tag`). | `show` (a CSS selector): once a scene shows anything, the template's entering elements wait for it |
+| `browser` | The product | `system`; `checkout` (a git ref to build and serve first); `start` (a path opened before the scene fades in, so it fades in on that page); `network` (`slow-4g`); `device: "phone"` plays the app at phone width in a phone frame on the brand canvas (landscape formats), with a big live layout-shift counter; `overlay: ["layout-shift"]` outlines every element that moves and shows a running CLS; `holdShifts` keeps the outlines until `clearShifts`; `badge` and `badgeColor` (`before` or `after`). | `goto`, `waitFor`, `scroll`, `click`, `reload`, `clearShifts` |
 | `code` | A real diff | `repo`, `diff` (`a..b`), `files`, `title` | `file` (scroll to the nth file), `scroll` |
 | `terminal` | A recorded Claude Code run | `take`: the saved output of `claude -p "<prompt>" --output-format stream-json --verbose`; `prompt`; `redact` (extra `[pattern, replacement]` pairs) | `reveal` (a number, `tools`, `final` or `all`; `every` sets the gap in ms), `scroll` |
-| `explain` | An animated diagram on one continuous canvas | `elements`, placed in percent of the frame (`at` as a list, or per format: `{"16:9": [...], "9:16": [...]}`). Kinds: `text`, `box` (`style` `dashed`, `solid` or `fill`), `dot`, `dots` (a scattered field), `axes`, `line` (from and to an element or a point; it draws on), `pill` (parts that light up), `counter`, `check`. | `show`, `hide`, `set` (move, resize, retone or retext an element), `light`, `count`, `pulse` |
+| `explain` | An animated diagram on one continuous canvas | `elements`, placed in percent of the frame (`at` as a list, or per format: `{"16:9": [...], "9:16": [...]}`). Kinds: `text` (`font` `mono`, `display` or `strong`), `box` (`style` `dashed`, `solid` or `fill`), `dot`, `dots` (a scattered field), `axes`, `line` (from and to an element or a point; it draws on), `pill` (parts that light up), `chip` (a status: a dot and a short uppercase word in its `tone`), `counter`, `check`. Tones: `cyan`, `amber`, `rose`, `green`, `violet`, `grey`, `muted`, `white`, `dim` or any CSS colour. | `show`, `hide`, `set` (move, resize, retone or retext an element), `light`, `count`, `pulse` |
 
 ### How a `checkout` is served
 

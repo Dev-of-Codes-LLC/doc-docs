@@ -1,9 +1,12 @@
-"""Word timings for captions, from the voice clip itself.
+"""Word timings for captions and anchors, from the voice clip itself.
 
-Piper does not report word times, so each word gets a share of the spoken
-part of its clip (from the first to the last sound above the noise floor),
-weighted by its length, with extra room after punctuation. Close enough for
-a word to light up while it is said.
+Neither Piper nor Kokoro reports word times. So each phrase (the words up to
+a comma, colon or full stop) is matched to a stretch of sound in the clip:
+a voice pauses at its commas, and those pauses show as short silences. Each
+word then gets a share of its phrase's stretch, weighted by its length. When
+the silences do not line up with the punctuation, the words share the whole
+spoken part instead. Close enough for a word to light up while it is said,
+and for a picture to land on the word that names it.
 """
 
 import array
@@ -13,6 +16,37 @@ from pathlib import Path
 
 MAX_WORDS = 5
 MAX_CHARS = 30
+
+
+GAP_MIN_S = 0.05  # a silence this long inside the speech can be a phrase break
+
+
+def _loudness(path: Path, floor: float) -> tuple[list[bool], float]:
+    """Whether each 10 ms window of a 16-bit mono WAV is above the noise floor, and the clip's length."""
+    with wave.open(str(path)) as wf:
+        rate = wf.getframerate()
+        samples = array.array("h", wf.readframes(wf.getnframes()))
+    if not samples:
+        return [], 0.0
+    window = max(1, rate // 100)
+    peak = max(abs(s) for s in samples) or 1
+    loud = [max(abs(s) for s in samples[i:i + window]) > peak * floor for i in range(0, len(samples), window)]
+    return loud, len(samples) / rate
+
+
+def silences(path: Path, floor: float = 0.04) -> list[tuple[float, float]]:
+    """The silent stretches inside the speech, (start, end) in seconds, at least GAP_MIN_S long."""
+    loud, _ = _loudness(path, floor)
+    gaps, run = [], None
+    started = False
+    for k, on in enumerate(loud):
+        if on:
+            if run is not None and started and (k - run) / 100 >= GAP_MIN_S:
+                gaps.append((run / 100, k / 100))
+            run, started = None, True
+        elif run is None:
+            run = k
+    return gaps
 
 
 def speech_bounds(path: Path, floor: float = 0.04) -> tuple[float, float]:
@@ -62,19 +96,63 @@ def chunk_words(words: list[str]) -> list[list[int]]:
     return groups
 
 
+def _spread(indexes: list[int], weights: list[float], start: float, end: float, spans: dict) -> None:
+    total = sum(weights[i] for i in indexes) or 1
+    at = start
+    for i in indexes:
+        length = (end - start) * weights[i] / total
+        spans[i] = (at, at + length)
+        at += length
+
+
+def word_spans(words: list[str], wav: Path) -> list[tuple[float, float]]:
+    """(start, end) in seconds for each word, phrases snapped to the clip's pauses where they line up."""
+    start, end = speech_bounds(wav)
+    weights = [_weight(w) for w in words]
+    phrases, current = [], []
+    for i, word in enumerate(words):
+        current.append(i)
+        if re.search(r"[.!?,;:]$", word) and i < len(words) - 1:
+            phrases.append(current)
+            current = []
+    if current:
+        phrases.append(current)
+    spans: dict[int, tuple[float, float]] = {}
+    gaps = [g for g in silences(wav) if start < g[0] and g[1] < end]
+    if len(phrases) > 1 and gaps:
+        # Where each break would fall if words shared the speech by weight; take the
+        # nearest unused pause after the last one, if it is close enough to be that break.
+        total = sum(weights)
+        breaks, used_until, ok = [], start, True
+        done = 0.0
+        for phrase in phrases[:-1]:
+            done += sum(weights[i] for i in phrase)
+            expected = start + (end - start) * done / total
+            near = [g for g in gaps if g[0] >= used_until]
+            if not near:
+                ok = False
+                break
+            gap = min(near, key=lambda g: abs((g[0] + g[1]) / 2 - expected))
+            if abs((gap[0] + gap[1]) / 2 - expected) > max(0.45, 0.15 * (end - start)):
+                ok = False
+                break
+            breaks.append(gap)
+            used_until = gap[1]
+        if ok:
+            edges = [start] + [x for g in breaks for x in g] + [end]
+            for n, phrase in enumerate(phrases):
+                _spread(phrase, weights, edges[2 * n], edges[2 * n + 1], spans)
+            return [spans[i] for i in range(len(words))]
+    _spread(list(range(len(words))), weights, start, end, spans)
+    return [spans[i] for i in range(len(words))]
+
+
 def timings(text: str, wav: Path, stretch: float = 1.0) -> list[dict]:
     """Caption chunks with per-word [start, end] in ms from the beat start, scaled by stretch."""
     words = text.split()
     if not words:
         return []
-    start, end = speech_bounds(wav)
-    weights = [_weight(w) for w in words]
-    total = sum(weights)
-    spans, at = [], start
-    for w in weights:
-        length = (end - start) * w / total
-        spans.append((at, at + length))
-        at += length
+    spans = word_spans(words, wav)
     chunks = []
     for group in chunk_words(words):
         chunks.append({

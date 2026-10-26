@@ -5,6 +5,8 @@
      "beats": [{"say": "...", "label": "the page *jumps*", "do": [{"goto": "/products"}, {"waitFor": "main[data-state=loaded]"}]}]}
 
 checkout    a git ref to build and serve first (optional; else the working tree)
+start       a path to open before the scene fades in, so it fades in on that
+            page rather than on a blank one
 network     a profile from docdocs.network (optional)
 device      "phone": in a landscape format, the page plays at phone width inside
             a phone frame on the brand canvas, with a big live layout-shift
@@ -15,7 +17,8 @@ holdShifts  keep the outlines until a clearShifts action, so the narration can
 badge       a label in the corner; badgeColor "before" (amber) or "after" (cyan)
 
 Actions: goto, waitFor, scroll, click, reload, clearShifts, and the common
-wait, zoom, unzoom and label. Labels get a navy backdrop here, so they read
+wait, zoom, unzoom and label. {"click": "<selector>", "instant": true} fires the
+click event at once instead of moving the mouse there first, so it lands on its word. Labels get a navy backdrop here, so they read
 on any page.
 """
 
@@ -99,6 +102,12 @@ async def record(ctx: SceneContext) -> Take:
         else:
             await ctx.show_html("<!doctype html><html style='background:#fff'><body></body></html>", "blank.html")
             app = page.main_frame
+            if raw.get("start"):
+                url = urljoin(base, raw["start"])
+                ctx.check(url)
+                await app.goto(url, wait_until="load")
+                await page.evaluate("document.fonts.ready")
+                await ctx.restore_hud()
         await apply_network(page, raw.get("network"))
         await ctx.begin()
 
@@ -119,7 +128,10 @@ async def record(ctx: SceneContext) -> Take:
                     await app.locator(value).first.evaluate("el => el.scrollIntoView({behavior: 'smooth', block: 'center'})")
                 await asyncio.sleep(0.9)
             elif name == "click":
-                await app.click(value)
+                if action.get("instant"):
+                    await app.locator(value).first.dispatch_event("click")
+                else:
+                    await app.click(value)
             elif name == "reload":
                 await app.evaluate("location.reload()")
                 if not framed:

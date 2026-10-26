@@ -29,7 +29,7 @@ from docdocs.voice import Clip, Voice
 
 BEAT_GAP_S = 0.15  # silence after each sentence: the reference pace is 0.1-0.4 s
 LEAD_IN_S = 0.1  # time on screen before the first beat of a scene
-FADE_MS = 320  # the fade through navy at each scene edge
+ANCHOR_LEAD_MS = 120  # an action anchored to a word fires this much before it, so the eye meets the ear
 
 
 @dataclass
@@ -89,11 +89,13 @@ class Brand:
     def font_css(self) -> str:
         """The HUD's fonts as data URIs, so they load on any page, including the product's own."""
         if self._font_css is None:
-            faces = {"DD Literata": "literata-400", "DD Syne": "syne-800", "DD Mono": "jetbrains-mono-700"}
+            faces = [("DD Literata", "literata-400", 400), ("DD Literata", "literata-600", 600),
+                     ("DD Syne", "syne-800", 800), ("DD Mono", "jetbrains-mono-700", 700)]
             rules = []
-            for family, file in faces.items():
+            for family, file, weight in faces:
                 data = base64.b64encode((self.dir / "fonts" / f"{file}.woff2").read_bytes()).decode()
-                rules.append(f"@font-face {{ font-family: '{family}'; src: url(data:font/woff2;base64,{data}) format('woff2'); }}")
+                rules.append(f"@font-face {{ font-family: '{family}'; font-weight: {weight}; "
+                             f"src: url(data:font/woff2;base64,{data}) format('woff2'); }}")
             self._font_css = "\n".join(rules)
         return self._font_css
 
@@ -191,7 +193,7 @@ class SceneContext:
 
     async def prepare(self, **config) -> None:
         """Inject the HUD into every page this scene opens. Call before the first navigation."""
-        cfg = {"fontCss": self.brand.font_css(), **config}
+        cfg = {"fontCss": self.brand.font_css(), "captionStyle": self.storyboard.caption_style, **config}
         script = f"window.__docdocs = {json.dumps(cfg)};\n" + (package_dir() / "hud.js").read_text(encoding="utf-8")
         await self.page.add_init_script(script)
 
@@ -232,23 +234,34 @@ class SceneContext:
     # -- the scene's life ----------------------------------------------------
 
     async def begin(self) -> None:
-        """Start recording behind the navy cover, then fade it out."""
-        await self.hud("cover", True, 0)
+        """Start recording behind the navy cover, then fade it out. With "fadeIn": false the first frame is the scene."""
+        fade = self.scene.raw.get("fadeIn", True)
+        if fade:
+            await self.hud("cover", True, 0)
+            # Let the cover reach the screen first, or the take opens on a frame without it.
+            await self.page.evaluate("() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))")
         await self.capture.start()
         await asyncio.sleep(0.05)
-        await self.hud("cover", False, FADE_MS)
+        if fade:
+            await self.hud("cover", False, self.storyboard.fade_ms)
         await asyncio.sleep(LEAD_IN_S)
 
     async def end(self) -> Take:
-        """Fade to navy, stop recording, and return the take."""
+        """Fade to navy, stop recording, and return the take. With "fadeOut": false the scene holds to the end."""
         await self.hud("label", None)
-        await self.hud("cover", True, FADE_MS)
-        await asyncio.sleep(FADE_MS / 1000 + 0.05)
+        if self.scene.raw.get("fadeOut", True):
+            await self.hud("cover", True, self.storyboard.fade_ms)
+            await asyncio.sleep(self.storyboard.fade_ms / 1000 + 0.05)
         duration = await self.capture.stop()
         return Take(duration=duration, frames=self.capture.frames, marks=self.marks, segments=self.segments)
 
     async def common(self, action: dict) -> bool:
-        """Actions every scene type understands. Return False if this one is not common."""
+        """Actions every scene type understands. Return False if this one is not common.
+
+        wait, zoom, unzoom and label, plus sheets laid over the scene: "sheet" adds or
+        updates one (see hud.js), and "sheets" bundles them ("bundle"), sends the bundle
+        off ("ship") or fades them ("clear").
+        """
         (name, value), *_ = action.items()
         if name == "wait":
             await asyncio.sleep(float(value) / 1000)
@@ -274,6 +287,15 @@ class SceneContext:
         elif name == "label":
             self.hud_state["label"] = value
             await self.hud("label", value)
+        elif name == "sheet":
+            sheets = self.hud_state.setdefault("sheets", {})
+            sheets[value["id"]] = {**sheets.get(value["id"], {}), **value}
+            await self.hud("sheet", value)
+        elif name == "sheets":
+            if value not in ("bundle", "ship", "clear"):
+                raise ValueError(f"{self.scene.label}: sheets takes bundle, ship or clear, got {value!r}")
+            self.hud_state["sheetsOp"] = value
+            await self.hud("sheets", value)
         else:
             return False
         return True
@@ -281,10 +303,10 @@ class SceneContext:
     async def play(self, run_action) -> None:
         """Run every beat: say the sentence while its actions run, then wait for the longer of the two.
 
-        An action with "at" waits for its moment: "at": "picture" fires when
-        the voice reaches that word (the first match after the previous
-        anchor), "at": 1200 fires 1.2 s into the beat. Actions without "at"
-        run straight away, in order.
+        An action with "at" waits for its moment: "at": "picture" fires just
+        before the voice reaches that word (ANCHOR_LEAD_MS; the first match
+        after the previous anchor), "at": 1200 fires 1.2 s into the beat.
+        Actions without "at" run straight away, in order.
 
         A beat with speed > 1 runs in real time but is played back faster, so
         it waits until its sentence fits the sped-up playback.
@@ -293,7 +315,8 @@ class SceneContext:
             start = self.capture.now()
             began = time.time()
             clip = self.clips.get(beat.say) if beat.say else None
-            chunks = timings(clip.text, clip.path, stretch=beat.speed) if clip else []
+            shown = beat.text or (clip.text if clip else "")
+            chunks = timings(shown, clip.path, stretch=beat.speed) if clip else []
             words = [(w, t) for c in chunks for w, t in zip(c["words"], c["times"])]
             if beat.label is not None:
                 self.hud_state["label"] = beat.label
@@ -301,10 +324,14 @@ class SceneContext:
             if beat.speed != 1:
                 self.hud_state["speed"] = beat.speed
                 await self.hud("speed", beat.speed)
-            if clip and self.captions:
+            captioned = self.captions if beat.captions is None else beat.captions and self.fmt.name in self.storyboard.captions
+            if clip and captioned:
                 spec = {"chunks": chunks, "t0": round(began * 1000)}
                 self.hud_state["caption"] = spec
                 await self.hud("caption", spec)
+            elif self.hud_state.get("caption"):
+                self.hud_state["caption"] = None
+                await self.hud("caption", None)
             cursor = 0
             for action in beat.actions:
                 if "at" in action:
@@ -318,7 +345,7 @@ class SceneContext:
                         if found is None:
                             raise ValueError(f"{self.scene.label}: 'at': {at!r} is not a word of {beat.say!r}")
                         cursor = found + 1
-                        target_ms = words[found][1][0]
+                        target_ms = max(0, words[found][1][0] - ANCHOR_LEAD_MS * beat.speed)
                     wait = target_ms / 1000 - (time.time() - began)
                     if wait > 0:
                         await asyncio.sleep(wait)
@@ -336,7 +363,7 @@ class SceneContext:
                 self.hud_state["speed"] = None
                 await self.hud("speed", None)
             if clip:
-                self.marks.append(Mark(start=start, text=clip.text, clip=str(clip.path), seconds=clip.seconds))
+                self.marks.append(Mark(start=start, text=shown, clip=str(clip.path), seconds=clip.seconds))
         self.hud_state["caption"] = None
         await self.hud("caption", None)
 
