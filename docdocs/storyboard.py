@@ -22,6 +22,8 @@ Optional top-level settings:
 - crf         the H.264 quality, 0-51 (default 18; lower is better)
 - srt         "sentences" (the default) makes one cue per sentence; "lines"
               makes one cue per caption line, the same lines burned in
+- gpu         true records with the browser on the machine's own GPU, for a
+              product that draws in 3D (docdocs/gpu.py). Off by default.
 - audio       {"loudness": -16, "truePeak": -1, "roomTone": {"gain": -58}}:
               mix to 48 kHz stereo and normalise the loudness in two passes.
               roomTone lays a quiet bed under the voice: synthesized brown
@@ -118,6 +120,7 @@ class Storyboard:
     audio: dict | None = None
     srt: str = "sentences"
     fade_ms: int = 320
+    gpu: bool = False
 
     @property
     def base_dir(self) -> Path:
@@ -212,6 +215,8 @@ def load(path: str | Path) -> Storyboard:
         problems.append("fade must be between 0 and 2000 ms")
     if not 0 <= int(raw.get("crf", 18)) <= 51:
         problems.append("crf must be between 0 and 51")
+    if not isinstance(raw.get("gpu", False), bool):
+        problems.append("gpu must be true or false")
 
     if problems:
         raise StoryboardError(f"{path}:\n  - " + "\n  - ".join(problems))
@@ -236,4 +241,5 @@ def load(path: str | Path) -> Storyboard:
         audio=raw.get("audio"),
         srt=raw.get("srt", "sentences"),
         fade_ms=int(raw.get("fade", 320)),
+        gpu=raw.get("gpu", False) is True,
     )
