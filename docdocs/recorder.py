@@ -377,9 +377,15 @@ def scene_dir(storyboard: Storyboard, fmt: Format, scene: Scene) -> Path:
 
 
 async def record(storyboard: Storyboard, only: set[int] | None = None, formats: list[Format] | None = None,
-                 voice: Voice | None = None, log=print) -> None:
-    """Record every scene (or only some) in every format, saving one take per scene."""
+                 voice: Voice | None = None, log=print, gpu: bool | None = None) -> None:
+    """Record every scene (or only some) in every format, saving one take per scene.
+
+    `gpu` puts the browser on the machine's own GPU (docdocs/gpu.py); left
+    as None, the storyboard's own "gpu" setting decides.
+    """
     from playwright.async_api import async_playwright
+
+    from docdocs.gpu import launch_args, renderer_of, report
 
     from docdocs.scenes import RECORDERS
 
@@ -396,8 +402,12 @@ async def record(storyboard: Storyboard, only: set[int] | None = None, formats: 
 
     brand = Brand(storyboard.raw.get("brand", "devofcodes"))
     async with async_playwright() as pw:
-        browser = await pw.chromium.launch()
+        on_gpu = storyboard.gpu if gpu is None else gpu
+        browser = await pw.chromium.launch(args=launch_args(on_gpu))
         try:
+            if on_gpu:
+                # Say what it got: where the flags do not take, the recording is in software after all.
+                log(report(await renderer_of(browser)))
             for fmt in formats or storyboard.formats:
                 for scene in storyboard.scenes:
                     if only and scene.index not in only:

@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from docdocs.gpu import is_software, launch_args, report
 from docdocs.hosts import HostNotAllowed, check_url
 from docdocs.mux import _srt_time
 from docdocs.scenes.code import render
@@ -36,6 +37,34 @@ class Hosts(unittest.TestCase):
             check_url("ftp://localhost/file")
 
 
+class Gpu(unittest.TestCase):
+    def test_no_extra_arguments_unless_asked(self):
+        self.assertEqual(launch_args(False), [])
+        self.assertEqual(launch_args(False, "win32"), [])
+
+    def test_each_system_gets_its_own_graphics_api(self):
+        self.assertIn("--use-angle=d3d11", launch_args(True, "win32"))
+        self.assertIn("--use-angle=metal", launch_args(True, "darwin"))
+        self.assertIn("--use-angle=gl", launch_args(True, "linux"))
+        for platform in ("win32", "darwin", "linux"):
+            self.assertIn("--enable-gpu", launch_args(True, platform))
+            self.assertIn("--ignore-gpu-blocklist", launch_args(True, platform))
+
+    def test_software_renderers_are_told_from_real_ones(self):
+        for name in ("ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+                     "llvmpipe (LLVM 15.0.7, 256 bits)", "Microsoft Basic Render Driver", "", None):
+            self.assertTrue(is_software(name), name)
+        for name in ("ANGLE (NVIDIA, NVIDIA GeForce RTX 3050 (0x00002584) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+                     "ANGLE (Apple, ANGLE Metal Renderer: Apple M2, Unspecified Version)",
+                     "ANGLE (Intel, Mesa Intel(R) Xe Graphics (TGL GT2), OpenGL 4.6)"):
+            self.assertFalse(is_software(name), name)
+
+    def test_the_log_says_what_it_got(self):
+        self.assertEqual(report("ANGLE (NVIDIA, NVIDIA GeForce RTX 3050)"), "gpu: ANGLE (NVIDIA, NVIDIA GeForce RTX 3050)")
+        self.assertIn("still draws in software", report("SwiftShader"))
+        self.assertIn("no WebGL", report(None))
+
+
 class Storyboards(unittest.TestCase):
     def write(self, data: dict) -> Path:
         tmp = Path(tempfile.mkdtemp())
@@ -50,6 +79,18 @@ class Storyboards(unittest.TestCase):
         self.assertEqual(sb.formats[0].width, 1920)
         self.assertEqual(sb.formats[1].height, 1920)
         self.assertEqual(sb.scenes[0].beats[0].say, "Hi.")
+
+    def test_gpu_is_off_unless_the_storyboard_asks(self):
+        board = {"id": "x", "title": "X", "formats": ["16:9"], "scenes": [{"type": "card", "beats": [{"say": "Hi."}]}]}
+        self.assertFalse(load(self.write(board)).gpu)
+        self.assertTrue(load(self.write({**board, "gpu": True})).gpu)
+        self.assertFalse(load(self.write({**board, "gpu": False})).gpu)
+
+    def test_gpu_must_be_true_or_false(self):
+        with self.assertRaises(StoryboardError) as e:
+            load(self.write({"id": "x", "title": "X", "formats": ["16:9"], "gpu": "yes",
+                             "scenes": [{"type": "card", "beats": [{"say": "Hi."}]}]}))
+        self.assertIn("gpu must be true or false", str(e.exception))
 
     def test_problems_are_listed_together(self):
         with self.assertRaises(StoryboardError) as e:

@@ -35,6 +35,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--format", choices=list(FORMATS), action="append", help="only this format (repeatable)")
     p.add_argument("--voice", help="override the storyboard's voice, e.g. silent")
     p.add_argument("--only", choices=["record", "stitch"], help="run one half of the build")
+    p.add_argument("--gpu", action="store_true", default=None,
+                   help="record with the browser on the machine's GPU, for a product that draws in 3D; "
+                        "the storyboard's \"gpu\" setting does the same")
 
     p = sub.add_parser("measure", help="run Lighthouse on each ref and write measurements.json")
     p.add_argument("storyboard")
@@ -74,7 +77,8 @@ def _run(args) -> int:
     sb = load(args.storyboard)
 
     if args.command == "check":
-        print(f"{sb.id}: {len(sb.scenes)} scenes, formats {', '.join(f.name for f in sb.formats)}, voice {sb.voice}")
+        print(f"{sb.id}: {len(sb.scenes)} scenes, formats {', '.join(f.name for f in sb.formats)}, voice {sb.voice}"
+              + (", on the GPU" if sb.gpu else ""))
         for s in sb.scenes:
             said = sum(1 for b in s.beats if b.say)
             print(f"  {s.index:2d}. {s.type:<8} {said} narrated beat(s)")
@@ -93,7 +97,7 @@ def _run(args) -> int:
     formats = [FORMATS[f] for f in args.format] if args.format else sb.formats
     if args.only != "stitch":
         voice = Voice(args.voice) if args.voice else None
-        asyncio.run(record(sb, only=args.scenes, formats=formats, voice=voice))
+        asyncio.run(record(sb, only=args.scenes, formats=formats, voice=voice, gpu=args.gpu))
     if args.only != "record":
         for fmt in formats:
             mp4, srt = stitch(sb, fmt)

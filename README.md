@@ -40,6 +40,7 @@ The videos land in `examples/cards/build/`. Add `--voice silent` to check timing
 | `docdocs build <storyboard> --scenes 3` | Re-records scene 3 only (1-based, comma-separated) and re-stitches. The other takes are reused. |
 | `docdocs build <storyboard> --format 9:16` | One format only. |
 | `docdocs build <storyboard> --only stitch` | Re-stitches from the saved takes without recording. |
+| `docdocs build <storyboard> --gpu` | Records with the browser on the machine's own GPU, for a product that draws in 3D. `"gpu": true` in the storyboard does the same. See "On the GPU". |
 | `docdocs measure <storyboard>` | Runs Lighthouse on each ref in the `measure` block and writes `measurements.json` next to the storyboard. |
 | `docdocs voices install kokoro` | Downloads the Kokoro model into your user folder. `docdocs voices install <piper voice>` gets a Piper voice; `docdocs voices list` shows the Piper voices you have. |
 
@@ -99,6 +100,7 @@ Any scene can lay **sheets** over itself: a test run, an audit, a write-up. `{"s
 | `fade` | The fade through navy at each scene edge, in ms (default 320). A shorter fade keeps the narration flowing across cuts. |
 | `crf` | H.264 quality, 0 to 51 (default 18; lower is better). The encode is always High profile, yuv420p, square pixels, 30 fps, with the index at the front of the file. |
 | `srt` | `"sentences"` (the default) writes one SRT cue per sentence; `"lines"` writes one cue per caption line, the same short lines that are burned in |
+| `gpu` | `true` records with the browser on the machine's own GPU (off by default). For a product that draws in 3D with WebGL; see "On the GPU". |
 | `audio` | `{"loudness": -16, "truePeak": -1, "roomTone": {"gain": -58}}` finishes the track before the encode: 48 kHz stereo, any music mixed in, then two loudnorm passes (measure, then one linear gain). `roomTone` lays a quiet bed under the voice, synthesized brown noise or `{"file": "room.wav", "gain": 0}` for a recorded room. |
 
 ### Scenes
@@ -126,6 +128,27 @@ Each ref gets its own git worktree in your user folder, so the repo you work in 
 Every scene is a web page in headless Chromium (Playwright). Frames come from the Chrome DevTools Protocol screencast as lossless PNGs, each with the time it was drawn. Narration is one cached WAV per sentence. For every 1/30 s of the video, the stitch picks the frame that was on screen at that moment, places each clip where its beat started, and encodes once to H.264, so picture and voice cannot drift.
 
 Labels, captions, badges, zooms and the fade through navy between scenes are drawn by a small script (`hud.js`) injected into every scene page, the product's own pages included, on a layer that the page's layout cannot see. They are in the recorded frames, timed by the same clock as the narration, so nothing is added afterwards.
+
+## On the GPU
+
+Headless Chromium draws WebGL in software unless it is told otherwise. For a card, a diff or an ordinary web page that makes no difference. For a product that draws in 3D it makes all of it: the scene plays as a slide show, and a product that reads the renderer's name sees a software one and may show its lightest version.
+
+`"gpu": true` in the storyboard, or `--gpu` on `docdocs build`, launches the browser with three more flags (`--use-angle=<the system's graphics API> --enable-gpu --ignore-gpu-blocklist`, in `docdocs/gpu.py`). Nothing else about the recording changes. The build log then says what it got:
+
+```
+gpu: ANGLE (NVIDIA, NVIDIA GeForce RTX 3050 (0x00002584) Direct3D11 vs_5_0 ps_5_0, D3D11)
+```
+
+Measured 2026-11-11 on Windows 11 with a GeForce RTX 3050, recording one browser scene of a 3D hall at 1920 x 1080 (about 5 million triangles a frame):
+
+| | Without | With `--gpu` |
+|---|---|---|
+| Frames a second, in the hall | 0.6 to 2.7 | 25 to 49 |
+| The scene, which the storyboard times at 64 s | 175 s | 64 s |
+
+- **Where it is checked.** Windows only, on Direct3D 11. On macOS the flags ask for Metal and on Linux for OpenGL; neither has been run.
+- **Where there is no GPU**, or the flags do not take, Chromium falls back to software. The log says `gpu: asked for, but the browser still draws in software`, and the recording carries on.
+- **It is off by default**, so a storyboard that never needed it records exactly as before, and a build is the same on a machine with a GPU as on one without. Turn it on only for a scene that draws in 3D: what is recorded then depends on the machine's GPU.
 
 ## Brand
 
