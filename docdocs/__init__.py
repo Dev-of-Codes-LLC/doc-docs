@@ -1,3 +1,3 @@
 """DOC Docs: turn a storyboard into a narrated video of a real product."""
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
