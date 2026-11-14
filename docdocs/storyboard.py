@@ -194,6 +194,13 @@ def load(path: str | Path) -> Storyboard:
             if not isinstance(actions, list):
                 problems.append(f"scene {i}: a beat's 'do' must be a list")
                 actions = []
+            for action in actions:
+                if not isinstance(action, dict):
+                    continue
+                if "type" in action and not isinstance(action.get("text"), str):
+                    problems.append(f"scene {i}: a 'type' action needs the 'text' to type")
+                if "select" in action and not isinstance(action.get("value"), str):
+                    problems.append(f"scene {i}: a 'select' action needs the 'value' to pick")
             speed = float(b.get("speed", 1))
             if not 0.5 <= speed <= 8:
                 problems.append(f"scene {i}: a beat's speed must be between 0.5 and 8")

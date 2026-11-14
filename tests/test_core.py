@@ -100,6 +100,17 @@ class Storyboards(unittest.TestCase):
         for part in ("missing 'title'", "unknown format '4:3'", "scene 1: type", "scene 2: system 'nope'"):
             self.assertIn(part, message)
 
+    def test_type_and_select_say_what_to_enter(self):
+        board = {"id": "x", "title": "X", "systems": {"app": {"baseUrl": "http://localhost:4173"}}}
+        scene = lambda do: {**board, "scenes": [{"type": "browser", "system": "app", "beats": [{"do": do}]}]}
+        good = load(self.write(scene([{"type": "input[name=q]", "text": "hello", "delay": 30},
+                                      {"select": "select", "value": "book"}, {"press": "Enter"}])))
+        self.assertEqual(len(good.scenes[0].beats[0].actions), 3)
+        with self.assertRaises(StoryboardError) as e:
+            load(self.write(scene([{"type": "input[name=q]"}, {"select": "select", "value": 2}])))
+        for part in ("scene 1: a 'type' action needs the 'text'", "scene 1: a 'select' action needs the 'value'"):
+            self.assertIn(part, str(e.exception))
+
     def test_scene_without_beats_still_shows(self):
         sb = load(self.write({"id": "x", "title": "X", "scenes": [{"type": "card", "hold": 1500}]}))
         self.assertEqual(sb.scenes[0].beats[0].hold_ms, 1500)

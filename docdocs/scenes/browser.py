@@ -16,10 +16,16 @@ holdShifts  keep the outlines until a clearShifts action, so the narration can
             point at them
 badge       a label in the corner; badgeColor "before" (amber) or "after" (cyan)
 
-Actions: goto, waitFor, scroll, click, reload, clearShifts, and the common
-wait, zoom, unzoom and label. {"click": "<selector>", "instant": true} fires the
-click event at once instead of moving the mouse there first, so it lands on its word. Labels get a navy backdrop here, so they read
-on any page.
+Actions: goto, waitFor, scroll, click, type, select, press, reload,
+clearShifts, and the common wait, zoom, unzoom and label.
+{"click": "<selector>", "instant": true} fires the click event at once instead
+of moving the mouse there first, so it lands on its word.
+{"type": "<selector>", "text": "..."} clicks the field and types the text one
+key at a time, as a person would; "delay" is the gap between keys in ms
+(default 45). {"select": "<selector>", "value": "..."} picks an option of a
+<select> by its value or its label. {"press": "Enter"} presses one key, or a
+chord such as "Control+A", wherever the focus is. Labels get a navy backdrop
+here, so they read on any page.
 """
 
 import asyncio
@@ -132,6 +138,14 @@ async def record(ctx: SceneContext) -> Take:
                     await app.locator(value).first.dispatch_event("click")
                 else:
                     await app.click(value)
+            elif name == "type":
+                field = app.locator(value).first
+                await field.click()
+                await field.press_sequentially(action["text"], delay=float(action.get("delay", 45)))
+            elif name == "select":
+                await app.locator(value).first.select_option(action["value"])
+            elif name == "press":
+                await page.keyboard.press(value)
             elif name == "reload":
                 await app.evaluate("location.reload()")
                 if not framed:
